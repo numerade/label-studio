@@ -37,6 +37,22 @@
    integrity="sha384-lowBFC6YTkvMIWPORr7+TERnCkZdo5ab00oH5NkFLeQUAmBTLGwJpFjF6djuxJ/5"
    crossorigin="anonymous"></script>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML-full" integrity="sha384-Ra6zh6uYMmH5ydwCqqMoykyf1T/+ZcnOQfFPhDrp2kI4OIxadnhsvvA2vv9A7xYv" crossorigin="anonymous"></script>
+  <script type="text/x-mathjax-config">
+    MathJax.Hub.Config({
+      messageStyle: 'none',
+      tex2jax: {
+        preview: 'none',
+        inlineMath: [["$","$"],["\\(","\\)"]],
+        processEscapes: true,
+        ignoreClass: "math-formula-input",
+        processClass: "latex-to-process"
+      },
+      showMathMenu: false,
+      showMathMenuMSIE: false
+    });
+  </script>
+
   <script>
     window.exports = () => {};
   </script>
