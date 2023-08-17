@@ -161,7 +161,7 @@ class ViewSerializer(serializers.ModelSerializer):
 
 class DataManagerTaskSerializer(TaskSerializer):
     predictions = serializers.SerializerMethodField(required=False, read_only=True)
-    annotations = AnnotationSerializer(required=False, many=True, default=[], read_only=True)
+    annotations = serializers.SerializerMethodField(required=False, read_only=True, default=[])
     drafts = serializers.SerializerMethodField(required=False, read_only=True)
     annotators = serializers.SerializerMethodField(required=False, read_only=True)
 
@@ -286,6 +286,26 @@ class DataManagerTaskSerializer(TaskSerializer):
 
         serializer_class = self.get_drafts_serializer()
         return serializer_class(drafts, many=True, read_only=True, default=True, context=self.context).data
+
+    @staticmethod
+    def get_annotations_queryset(user, annotations):
+        """ Get all user's annotations
+        """
+        return annotations.filter(completed_by=user)
+
+    def get_annotations(self, task):
+        """If user is not staff, return annotations only for the current user"""
+        # it's for swagger documentation
+        if not isinstance(task, Task) or not self.context.get('annotations'):
+            return []
+
+        annotations = task.annotations
+        if 'request' in self.context and hasattr(self.context['request'], 'user'):
+            user = self.context['request'].user
+            if not user.is_staff:
+                annotations = self.get_annotations_queryset(user, annotations)
+
+        return AnnotationSerializer(annotations, many=True, read_only=True, default=True, context=self.context, expand=['completed_by']).data
 
 
 class SelectedItemsSerializer(serializers.Serializer):

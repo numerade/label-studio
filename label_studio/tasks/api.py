@@ -183,7 +183,7 @@ class TaskAPI(generics.RetrieveUpdateDestroyAPIView):
             evaluate_predictions([self.task])
             self.task.refresh_from_db()
 
-        serializer = self.get_serializer_class()(self.task, many=False, context=context, expand=['annotations.completed_by'])
+        serializer = self.get_serializer_class()(self.task, many=False, context=context)
         data = serializer.data
         return Response(data)
 
