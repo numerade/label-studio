@@ -183,7 +183,10 @@ class ExportAPI(generics.RetrieveAPIView):
         for _task_ids in batch(task_ids, 1000):
             tasks += ExportDataSerializer(
                 self.get_task_queryset(query.filter(id__in=_task_ids)), many=True, expand=['drafts'],
-                context={'interpolate_key_frames': interpolate_key_frames}
+                context={
+                    'interpolate_key_frames': interpolate_key_frames,
+                    'request': request
+                }
             ).data
         logger.debug('Prepare export files')
 
