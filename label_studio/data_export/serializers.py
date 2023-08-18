@@ -42,7 +42,7 @@ class AnnotationSerializer(FlexFieldsModelSerializer):
 
 
 class BaseExportDataSerializer(FlexFieldsModelSerializer):
-    annotations = AnnotationSerializer(many=True, read_only=True)
+    annotations = serializers.SerializerMethodField(read_only=True)
     file_upload = serializers.ReadOnlyField(source='file_upload_name')
     drafts = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     predictions = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
@@ -62,6 +62,22 @@ class BaseExportDataSerializer(FlexFieldsModelSerializer):
         replace_task_data_undefined_with_config_field(data, project)
 
         return super().to_representation(task)
+
+    @staticmethod
+    def get_annotations_queryset(user, annotations):
+        """ Get all user's annotations
+        """
+        return annotations.filter(completed_by=user)
+
+    def get_annotations(self, task):
+        """If user is not staff, return annotations only for the current user"""
+        annotations = task.annotations
+        if 'request' in self.context and hasattr(self.context['request'], 'user'):
+            user = self.context['request'].user
+            if not user.is_staff:
+                annotations = self.get_annotations_queryset(user, annotations)
+
+        return AnnotationSerializer(annotations, many=True, read_only=True, default=True, context=self.context).data
 
     class Meta:
         model = Task
