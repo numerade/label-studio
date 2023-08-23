@@ -17,7 +17,7 @@ from django.utils.decorators import method_decorator
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from urllib.parse import unquote, urlparse
@@ -534,7 +534,7 @@ class FileUploadListAPI(generics.mixins.ListModelMixin,
         operation_description='Delete a specific uploaded file.'))
 class FileUploadAPI(generics.RetrieveUpdateDestroyAPIView):
     parser_classes = (JSONParser, MultiPartParser, FormParser)
-    permission_classes = (IsAdminUser, )
+    permission_classes = (IsAuthenticated, )
     serializer_class = FileUploadSerializer
     queryset = FileUpload.objects.all()
 
@@ -553,7 +553,7 @@ class FileUploadAPI(generics.RetrieveUpdateDestroyAPIView):
 
 
 class UploadedFileResponse(generics.RetrieveAPIView):
-    permission_classes = (IsAdminUser, )
+    permission_classes = (IsAuthenticated, )
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, *args, **kwargs):

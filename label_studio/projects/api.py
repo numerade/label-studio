@@ -5,6 +5,7 @@ import logging
 import pathlib
 import os
 
+from django.contrib.admin.views.decorators import staff_member_required
 from django.db import IntegrityError
 from django.conf import settings
 from django.db.models import F
@@ -166,6 +167,7 @@ class ProjectListAPI(generics.ListCreateAPIView):
         return super(ProjectListAPI, self).get(request, *args, **kwargs)
 
     @api_webhook(WebhookAction.PROJECT_CREATED)
+    @staff_member_required
     def post(self, request, *args, **kwargs):
         return super(ProjectListAPI, self).post(request, *args, **kwargs)
 
@@ -212,10 +214,12 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
         return super(ProjectAPI, self).get(request, *args, **kwargs)
 
     @api_webhook_for_delete(WebhookAction.PROJECT_DELETED)
+    @staff_member_required
     def delete(self, request, *args, **kwargs):
         return super(ProjectAPI, self).delete(request, *args, **kwargs)
 
     @api_webhook(WebhookAction.PROJECT_UPDATED)
+    @staff_member_required
     def patch(self, request, *args, **kwargs):
         project = self.get_object()
         label_config = self.request.data.get('label_config')
@@ -236,6 +240,7 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
 
     @swagger_auto_schema(auto_schema=None)
     @api_webhook(WebhookAction.PROJECT_UPDATED)
+    @staff_member_required
     def put(self, request, *args, **kwargs):
         return super(ProjectAPI, self).put(request, *args, **kwargs)
 
