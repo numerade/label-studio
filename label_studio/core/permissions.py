@@ -59,4 +59,7 @@ def make_perm(name, pred, overwrite=False):
 
 
 for _, permission_name in all_permissions:
-    make_perm(permission_name, rules.is_authenticated)
+    if permission_name.endswith('view') or permission_name.startswith('annotations'):
+        make_perm(permission_name, rules.is_authenticated)
+    else:
+        make_perm(permission_name, rules.is_staff)

@@ -5,7 +5,6 @@ import logging
 import pathlib
 import os
 
-from django.contrib.admin.views.decorators import staff_member_required
 from django.db import IntegrityError
 from django.conf import settings
 from django.db.models import F
@@ -22,6 +21,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import exception_handler
 from django.http import Http404
 
+from core.decorators import permission_required
 from core.utils.common import temporary_disconnect_all_signals
 from core.mixins import GetParentObjectMixin
 from core.label_config import config_essential_data_has_changed
@@ -132,10 +132,10 @@ class ProjectListAPI(generics.ListCreateAPIView):
     serializer_class = ProjectSerializer
     filter_backends = [filters.OrderingFilter, DjangoFilterBackend]
     filterset_class = ProjectFilterSet
-    permission_required = ViewClassPermission(
-        GET=all_permissions.projects_view,
-        POST=all_permissions.projects_create,
-    )
+    # permission_required = ViewClassPermission(
+    #     GET=all_permissions.projects_view,
+    #     POST=all_permissions.projects_create,
+    # )
     pagination_class = ProjectListPagination
 
     def get_queryset(self):
@@ -167,7 +167,7 @@ class ProjectListAPI(generics.ListCreateAPIView):
         return super(ProjectListAPI, self).get(request, *args, **kwargs)
 
     @api_webhook(WebhookAction.PROJECT_CREATED)
-    @staff_member_required
+    @permission_required(all_permissions.projects_create)
     def post(self, request, *args, **kwargs):
         return super(ProjectListAPI, self).post(request, *args, **kwargs)
 
@@ -192,13 +192,13 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
 
     parser_classes = (JSONParser, FormParser, MultiPartParser)
     queryset = Project.objects.with_counts()
-    permission_required = ViewClassPermission(
-        GET=all_permissions.projects_view,
-        DELETE=all_permissions.projects_delete,
-        PATCH=all_permissions.projects_change,
-        PUT=all_permissions.projects_change,
-        POST=all_permissions.projects_create,
-    )
+    # permission_required = ViewClassPermission(
+    #     GET=all_permissions.projects_view,
+    #     DELETE=all_permissions.projects_delete,
+    #     PATCH=all_permissions.projects_change,
+    #     PUT=all_permissions.projects_change,
+    #     POST=all_permissions.projects_create,
+    # )
     serializer_class = ProjectSerializer
 
     redirect_route = 'projects:project-detail'
@@ -214,12 +214,12 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
         return super(ProjectAPI, self).get(request, *args, **kwargs)
 
     @api_webhook_for_delete(WebhookAction.PROJECT_DELETED)
-    @staff_member_required
+    @permission_required(all_permissions.projects_delete)
     def delete(self, request, *args, **kwargs):
         return super(ProjectAPI, self).delete(request, *args, **kwargs)
 
     @api_webhook(WebhookAction.PROJECT_UPDATED)
-    @staff_member_required
+    @permission_required(all_permissions.projects_change)
     def patch(self, request, *args, **kwargs):
         project = self.get_object()
         label_config = self.request.data.get('label_config')
@@ -240,7 +240,7 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
 
     @swagger_auto_schema(auto_schema=None)
     @api_webhook(WebhookAction.PROJECT_UPDATED)
-    @staff_member_required
+    @permission_required(all_permissions.projects_change)
     def put(self, request, *args, **kwargs):
         return super(ProjectAPI, self).put(request, *args, **kwargs)
 
