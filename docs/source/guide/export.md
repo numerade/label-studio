@@ -3,11 +3,11 @@ title: Export annotations and data from Label Studio
 short: Export annotations
 type: guide
 tier: all
-order: 206
-order_enterprise: 109
+order: 166
+order_enterprise: 166
 meta_title: Export Annotations
 meta_description: Label Studio documentation for exporting data labeling annotations to use in machine learning models and data science projects.
-section: "Import and Export"
+section: "Import & Export"
 
 ---
 
@@ -20,8 +20,7 @@ Image annotations exported in JSON format use percentages of overall image size,
 !!! note
     Some export formats export only the annotations and not the data from the task. For more information, see the [export formats supported by Label Studio](#Export-formats-supported-by-Label-Studio).
 
-
-<!-- md annotation_ids.md -->
+{% insertmd includes/annotation_ids.md %}
 
 <div class="opensource-only">
 
@@ -47,12 +46,12 @@ If the export times out, see how to [export snapshots using the SDK](https://lab
 Use the following command to export data and annotations.
 
 ```shell
-label-studio export <project-id> <export-format> --path=<output-path>
+label-studio export <project-id> <export-format> --export-path=<output-path>
 ```
 
 To enable logs: 
 ```shell
-DEBUG=1 LOG_LEVEL=DEBUG label-studio export <project-id> <export-format> --path=<output-path>
+DEBUG=1 LOG_LEVEL=DEBUG label-studio export <project-id> <export-format> --export-path=<output-path>
 ```
 
 </div>
@@ -106,7 +105,7 @@ For a large labeling project with hundreds of thousands of tasks, do the followi
 
 ## Export formats supported by Label Studio
 
-Label Studio supports many common and standard formats for exporting completed labeling tasks. If you don't see a format that works for you, you can contribute one. For more information, see the [GitHub repository for the Label Studio Converter tool](https://github.com/heartexlabs/label-studio-converter).
+Label Studio supports many common and standard formats for exporting completed labeling tasks. If you don't see a format that works for you, you can contribute one. For more information, see the [GitHub repository for the Label Studio Converter tool](https://github.com/HumanSignal/label-studio-converter).
 
 ### ASR_MANIFEST
 
@@ -122,7 +121,144 @@ Export your brush mask labels as NumPy 2d arrays and PNG images. Each label outp
 
 ### COCO
 
-A popular machine learning format used by the [COCO dataset](http://cocodataset.org/#home) for object detection and image segmentation tasks. Supports bounding box and polygon image labeling projects that use the `RectangleLabels` or `PolygonLabels` tags.
+A popular machine learning format used by the [COCO dataset](http://cocodataset.org/#home) for object detection and image segmentation tasks. Supports bounding box and polygon image labeling projects that use the `BrushLabels`, `RectangleLabels`, `KeyPointLabels` (see note below), or `PolygonLabels` tags.
+
+
+{% details <b>KeyPointLabels Export Support</b> %}
+
+If using `KeyPointLabels`, you will need to add the following to your labeling config:
+
+* At least one `<RectangleLabels>` option. You will use this as a parent bounding box for the keypoints. 
+* Add a `model_index` to every `<Label>` inside your `<KeyPointLabels>` tag. The `model_index` value defines the order of the keypoint coordinates in the output array for YOLO. 
+
+For example:
+
+```xml
+<View>
+  <Image name="image" value="$image"/>
+
+  <KeyPointLabels name="kp" toName="image">
+    <Label value="nose" model_index="0"/>
+    <Label value="eye" model_index="1"/>
+    <Label value="tail" model_index="2"/>
+  </KeyPointLabels>
+
+  <RectangleLabels name="bbox" toName="image">
+    <Label value="animal"/>
+  </RectangleLabels>
+</View>
+
+```
+
+After annotating, you must drag-and-drop each keypoint region under its corresponding rectangle region in the **Regions** panel. 
+
+This establishes a parent–child hierarchy (via parentID), which is necessary for export. See the export examples below. 
+
+![Screenshot of keypoints within a bounding box](/images/import-export/keypoints.png)
+
+**Export examples**
+
+<div class="code-tabs">
+  <div data-name="Keypoints in JSON">
+```json
+[
+      {
+        "result": [
+          {
+            "id": "17n06ubOJs",
+            "type": "keypointlabels",
+            "value": {
+              "x": 6.675567423230974,
+              "y": 20.597014925373134,
+              "width": 0.26702269692923897,
+              "keypointlabels": [
+                "nose"
+              ]
+            },
+            "origin": "manual",
+            "to_name": "image",
+            "parentID": "QHG4TBXuNC",
+            "from_name": "kp",
+            "image_rotation": 0,
+            "original_width": 200,
+            "original_height": 179
+          },
+          {
+            "id": "QHG4TBXuNC",
+            "type": "rectanglelabels",
+            "value": {
+              "x": 3.871829105473965,
+              "y": 4.029850746268656,
+              "width": 94.39252336448598,
+              "height": 92.08955223880598,
+              "rotation": 0,
+              "rectanglelabels": [
+                "animal"
+              ]
+            },
+            "origin": "manual",
+            "to_name": "image",
+            "from_name": "bbox",
+            "image_rotation": 0,
+            "original_width": 200,
+            "original_height": 179
+          }
+]
+```
+  </div>
+  <div data-name="Keypoints in COCO">
+```json
+[
+    {
+      "id": 0,
+      "image_id": 0,
+      "category_id": 0,
+      "segmentation": [],
+      "bbox": [
+        7.74365821094793,
+        7.213432835820895,
+        188.78504672897196,
+        164.84029850746268
+      ],
+      "ignore": 0,
+      "iscrowd": 0,
+      "area": 31119.38345654903
+    },
+    {
+      "id": 1,
+      "image_id": 0,
+      "category_id": 0,
+      "keypoints": [
+        13,
+        37,
+        2,
+        33,
+        33,
+        2,
+        167,
+        24,
+        2
+      ],
+      "num_keypoints": 3,
+      "bbox": [
+        13,
+        24,
+        154,
+        13
+      ],
+      "iscrowd": 0
+    }
+]
+```
+  </div>
+  <div data-name="Keypoints in YOLO">
+```
+0 0.5106809078771696 0.5007462686567165 0.9439252336448598 0.9208955223880598 0.06675567423230974 0.20597014925373133 2 0.1628838451268358 0.18507462686567164 2 0.8371161548731643 0.13134328358208955 2
+```
+  </div>
+</div>
+{% enddetails %}
+
 
 ### CoNLL2003
 
@@ -143,7 +279,7 @@ List of items where only `"from_name", "to_name"` values from the [raw JSON form
 For example: 
 ```json
 {
-  "image": "https://htx-misc.s3.amazonaws.com/opensource/label-studio/examples/images/nick-owuor-astro-nic-visuals-wDifg5xc9Z4-unsplash.jpg",
+  "image": "https://htx-pub.s3.us-east-1.amazonaws.com/examples/images/nick-owuor-astro-nic-visuals-wDifg5xc9Z4-unsplash.jpg",
   "tag": [{
     "height": 10.458911419423693,
     "rectanglelabels": [
@@ -190,150 +326,17 @@ Results are stored in a tab-separated tabular file with column names specified b
 
 ### YOLO
 
-Export object detection annotations in the YOLOv3 and YOLOv4 format. Supports object detection labeling projects that use the `RectangleLabels` tag. 
+Export object detection annotations in the YOLOv3 and YOLOv4 format. Supports object detection labeling projects that use the `RectangleLabels`  and `KeyPointLabels` tags. 
 
+!!! note
+    If using KeyPointLabels, see the note under [COCO](#COCO).
 
-## Label Studio JSON format of annotated tasks 
+{% insertmd includes/task_format.md %}
 
-When you annotate data, Label Studio stores the output in JSON format. The raw JSON structure of each completed task uses the following example: 
-
-```json
-{
-    "id": 1,
-
-    "data": {
-        "image": "https://example.com/opensource/label-studio/examples/images/nick-owuor-astro-nic-visuals-wDifg5xc9Z4-unsplash.jpg"
-    },
-    "created_at":"2021-03-09T21:52:49.513742Z",
-    "updated_at":"2021-03-09T22:16:08.746926Z",
-    "project":83,
-    "annotations": [
-        {
-            "id": "1001",
-            "result": [
-                {
-                    "from_name": "tag",
-                    "id": "Dx_aB91ISN",
-                    "source": "$image",
-                    "to_name": "img",
-                    "type": "rectanglelabels",
-                    "value": {
-                        "height": 10.458911419423693,
-                        "rectanglelabels": [
-                            "Moonwalker"
-                        ],
-                        "rotation": 0,
-                        "width": 12.4,
-                        "x": 50.8,
-                        "y": 5.869797225186766
-                    }
-                }
-            ],
-            "was_cancelled":false,
-            "ground_truth":false,
-            "created_at":"2021-03-09T22:16:08.728353Z",
-            "updated_at":"2021-03-09T22:16:08.728378Z",
-            "lead_time":4.288,
-            "result_count":0,
-            "task":1,
-            "completed_by":10
-        }
-    ],
-
-    "predictions": [
-        {
-            "created_ago": "3 hours",
-            "model_version": "model 1",
-            "result": [
-                {
-                    "from_name": "tag",
-                    "id": "t5sp3TyXPo",
-                    "source": "$image",
-                    "to_name": "img",
-                    "type": "rectanglelabels",
-                    "value": {
-                        "height": 11.612284069097889,
-                        "rectanglelabels": [
-                            "Moonwalker"
-                        ],
-                        "rotation": 0,
-                        "width": 39.6,
-                        "x": 13.2,
-                        "y": 34.702495201535505
-                    }
-                }
-            ]
-        },
-        {
-            "created_ago": "4 hours",
-            "model_version": "model 2",
-            "result": [
-                {
-                    "from_name": "tag",
-                    "id": "t5sp3TyXPo",
-                    "source": "$image",
-                    "to_name": "img",
-                    "type": "rectanglelabels",
-                    "value": {
-                        "height": 33.61228406909789,
-                        "rectanglelabels": [
-                            "Moonwalker"
-                        ],
-                        "rotation": 0,
-                        "width": 39.6,
-                        "x": 13.2,
-                        "y": 54.702495201535505
-                    }
-                }
-            ]
-        }
-    ]
-}
-```
-
-### Relevant JSON property descriptions
-
-Review the full list of JSON properties in the [API documentation](api.html).
-
-| JSON property name | Description |
-| --- | --- | 
-| id | Identifier for the labeling task from the dataset. |
-| data | Data copied from the input data task format. See the documentation for [Task Format](tasks.html#Basic-Label-Studio-JSON-format). |
-| project | Identifier for a specific project in Label Studio. |
-| annotations | Array containing the labeling results for the task. |
-| annotations.id | Identifier for the completed task. |
-| annotations.lead_time | Time in seconds to label the task. |
-| annotations.result | Array containing the results of the labeling or annotation task. |
-| result.id | Identifier for the specific annotation result for this task.|
-| result.from_name | Name of the tag used to label the region. See [control tags](/tags). |
-| result.to_name | Name of the object tag that provided the region to be labeled. See [object tags](/tags). |
-| result.type | Type of tag used to annotate the task. |
-| result.value | Tag-specific value that includes details of the result of labeling the task. The value structure depends on the tag for the label. For more information, see [Explore each tag](/tags). |
-| annotations.completed_by | User ID of the user that created the annotation. Matches the list order of users on the People page on the Label Studio UI. |
-| annotations.was_cancelled | Boolean. Details about whether or not the annotation was skipped, or cancelled. | 
-| drafts | Array of draft annotations. Follows similar format as the annotations array. Included only for tasks exported as a snapshot [from the UI](#Export-snapshots-using-the-UI) or [using the API](#Export-snapshots-using-the-Snapshot-API).
-| predictions | Array of machine learning predictions. Follows the same format as the annotations array, with one additional parameter. |
-| predictions.score | The overall score of the result, based on the probabilistic output, confidence level, or other. | 
-
-
-<div class="enterprise-only">
-
-Enterprise fields are presented in export:
-
-| JSON property name | Description |
-| --- | --- | 
-| annotations.reviews | Array containing the details of reviews for this annotation.  |
-| reviews.id | ID of the specific annotation review. |
-| reviews.created_by |  Dictionary containing user ID, email, first name and last name of the user performing the review. |
-| reviews.accepted |  Boolean. Whether the reviewer accepted the annotation as part of their review. | 
-
-</div>
-
-<!-- md image_units.md -->
-
+{% insertmd includes/image_units.md %}
 
 ## Manually convert JSON annotations to another format
-You can run the [Label Studio converter tool](https://github.com/heartexlabs/label-studio-converter) on a directory or file of completed JSON annotations using the command line or Python to convert the completed annotations from Label Studio JSON format into another format. 
+You can run the [Label Studio converter tool](https://github.com/HumanSignal/label-studio-converter) on a directory or file of completed JSON annotations using the command line or Python to convert the completed annotations from Label Studio JSON format into another format. 
 
 !!! note
     If you use versions of Label Studio earlier than 1.0.0, then this is the only way to convert your Label Studio JSON format annotations into another labeling format. 

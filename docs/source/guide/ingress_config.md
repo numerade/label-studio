@@ -3,11 +3,13 @@ title: Set up an ingress controller for Label Studio Kubernetes deployments
 short: Set up an ingress controller
 type: guide
 tier: all
-order: 112
-order_enterprise: 137
+order: 70
+order_enterprise: 70
 meta_title: Set up an ingress controller for Label Studio Kubernetes Deployments
 meta_description: Set up an ingress controller to manage load balancing and access to Label Studio Kubernetes deployments for your data science and machine learning projects.
-section: "Install"
+section: "Install & Setup"
+parent: "install_k8s"
+parent_enterprise: "install_enterprise_k8s"
 ---
 
 Set up an ingress controller to manage Ingress, the Kubernetes resource that exposes HTTP and HTTPS routes from outside your Kubernetes cluster to the services within the cluster, such as Label Studio rqworkers and others.  
@@ -112,8 +114,6 @@ app:
     enabled: true
     host: "your_domain_name"
     className: nginx
-    annotations:
-      nginx.ingress.kubernetes.io/proxy-body-size: "200m"
     tls:
       - secretName: <CERTIFICATE_NAME>
         hosts:
@@ -130,3 +130,24 @@ global:
   extraEnvironmentVars:
     LABEL_STUDIO_HOST: https://your_domain_name
 ```
+
+
+## Handle large file uploads with NGINX ingress
+
+When uploading large files through an NGINX ingress controller, you might encounter a "413 Request Entity Too Large" error. This happens because NGINX has a default limit of 1MB on the size of client request body.
+
+To handle large file uploads, you can configure the `proxy-body-size` annotation in your ingress configuration. Update your `ls-values.yaml` file to include this annotation:
+```yaml
+app:
+  ingress:
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "200m"
+```
+
+If you're using a different ingress controller, consult the documentation for that specific controller to learn how to configure request body size limits. For example:
+
+- For HAProxy Ingress Controller, use the `haproxy.org/client-max-body-size` annotation
+- For Traefik, configure the `maxRequestBodyBytes` middleware
+- For AWS ALB Ingress Controller, the maximum request body size is controlled by the ALB settings
+
+The exact configuration will depend on your ingress controller type and version. Refer to your controller's documentation for the specific annotation or configuration needed.

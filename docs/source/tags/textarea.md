@@ -10,31 +10,7 @@ The `TextArea` tag is used to display a text area for user input. Use for transc
 
 Use with the following data types: audio, image, HTML, paragraphs, text, time series, video.
 
-[^1]: `fflag_feat_front_lsdv_4659_skipduplicates_060323_short` should be enabled to use `skipDuplicates` attribute
-
-[^2]: `fflag_feat_front_lsdv_4712_skipduplicates_editing_110423_short` should be enabled to keep submissions unique during editing existed results
-
-[^3]: `fflag_feat_front_lsdv_4583_multi_image_segmentation_short` should be enabled for `perItem` functionality
-
-### Parameters
-
-| Param | Type | Default | Description |
-| --- | --- | --- | --- |
-| name | <code>string</code> |  | Name of the element |
-| toName | <code>string</code> |  | Name of the element that you want to label |
-| value | <code>string</code> |  | Pre-filled value |
-| [label] | <code>string</code> |  | Label text |
-| [placeholder] | <code>string</code> |  | Placeholder text |
-| [maxSubmissions] | <code>string</code> |  | Maximum number of submissions |
-| [editable] | <code>boolean</code> | <code>false</code> | Whether to display an editable textarea |
-| [skipDuplicates] | <code>boolean</code> | <code>false</code> | Prevent duplicates in textarea inputs[^1][^2] (see example below) |
-| [transcription] | <code>boolean</code> | <code>false</code> | If false, always show editor |
-| [rows] | <code>number</code> |  | Number of rows in the textarea |
-| [required] | <code>boolean</code> | <code>false</code> | Validate whether content in textarea is required |
-| [requiredMessage] | <code>string</code> |  | Message to show if validation fails |
-| [showSubmitButton] | <code>boolean</code> |  | Whether to show or hide the submit button. By default it shows when there are more than one rows of text, such as in textarea mode. |
-| [perRegion] | <code>boolean</code> |  | Use this tag to label regions instead of whole objects |
-| [perItem] | <code>boolean</code> |  | Use this tag to label items inside objects instead of whole objects[^3] |
+{% insertmd includes/tags/textarea.md %}
 
 ### Example
 
@@ -62,7 +38,7 @@ You can combine the `TextArea` tag with other tags for OCR or other transcriptio
 ```
 ### Example
 
-You can keep submissions unique[^1][^2]
+You can keep submissions unique.
 
 ```html
 <View>

@@ -1,8 +1,7 @@
 """This file and its contents are licensed under the Apache License 2.0. Please see the included NOTICE for copyright information and LICENSE for a copy of the license.
 """
-from rest_framework.exceptions import APIException, ValidationError
 from rest_framework import status
-from lxml.etree import XMLSyntaxError
+from rest_framework.exceptions import APIException
 
 
 class LabelStudioError(Exception):
@@ -28,22 +27,8 @@ class ProjectExistException(LabelStudioAPIException):
     default_detail = 'Project with the same title already exists'
 
 
-class LabelStudioErrorSentryIgnored(Exception):
-    pass
-
-
-class LabelStudioAPIExceptionSentryIgnored(LabelStudioAPIException):
-    pass
-
-
-class LabelStudioValidationErrorSentryIgnored(ValidationError):
-    pass
-
-
-class LabelStudioXMLSyntaxErrorSentryIgnored(Exception):
-    pass
-
-
 class InvalidUploadUrlError(LabelStudioAPIException):
-    default_detail = 'The provided URL was not valid. URLs must begin with http:// or https://, and cannot be local IPs.'
+    default_detail = (
+        'The provided URL was not valid. URLs must begin with http:// or https://, and cannot be local IPs.'
+    )
     status_code = status.HTTP_403_FORBIDDEN

@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   nginx:
     build: .
@@ -47,7 +46,7 @@ services:
     command: label-studio-uwsgi
 
   db:
-    image: postgres:11.5
+    image: pgautoupgrade/pgautoupgrade:13-alpine
     hostname: db
     restart: unless-stopped
     # Optional: Enable TLS on PostgreSQL
@@ -59,7 +58,7 @@ services:
     #      -c ssl_key_file=/var/lib/postgresql/certs/server.key
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_USER=postgres
     volumes:
       - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
       - ./deploy/pgsql/certs:/var/lib/postgresql/certs:ro
-

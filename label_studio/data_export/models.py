@@ -11,15 +11,14 @@ import ujson as json
 from core import version
 from core.feature_flags import flag_set
 from core.utils.common import load_func
-from core.utils.io import get_all_files_from_dir, get_temp_dir, read_bytes_stream
+from core.utils.io import get_all_files_from_dir, get_temp_dir, path_to_open_binary_file
 from django.conf import settings
 from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
-from label_studio_converter import Converter
+from label_studio_sdk.converter import Converter
 from tasks.models import Annotation
-
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +101,7 @@ class DataExport(object):
         annotation_number = Annotation.objects.filter(project=project).count()
         try:
             platform_version = version.get_git_version()
-        except:
+        except:  # noqa: E722
             platform_version = 'none'
             logger.error('Version is not detected in save_export_files()')
         info = {
@@ -143,7 +142,12 @@ class DataExport(object):
         return sorted(formats, key=lambda f: f.get('disabled', False))
 
     @staticmethod
-    def generate_export_file(project, tasks, output_format, download_resources, get_args):
+    def generate_export_file(project, tasks, output_format, download_resources, get_args, hostname=None):
+        """Generate export file and return it as an open file object.
+
+        Be sure to close the file after using it, to avoid wasting disk space.
+        """
+
         # prepare for saving
         now = datetime.now()
         data = json.dumps(tasks, ensure_ascii=False)
@@ -157,6 +161,8 @@ class DataExport(object):
             project_dir=None,
             upload_dir=os.path.join(settings.MEDIA_ROOT, settings.UPLOAD_DIR),
             download_resources=download_resources,
+            access_token=project.organization.created_by.auth_token.key,
+            hostname=hostname,
         )
         with get_temp_dir() as tmp_dir:
             converter.convert(input_json, tmp_dir, output_format, is_dir=False)
@@ -166,13 +172,13 @@ class DataExport(object):
                 output_file = files[0]
                 ext = os.path.splitext(output_file)[-1]
                 content_type = f'application/{ext}'
-                out = read_bytes_stream(output_file)
+                out = path_to_open_binary_file(output_file)
                 filename = name + os.path.splitext(output_file)[-1]
                 return out, content_type, filename
 
             # otherwise pack output directory into archive
             shutil.make_archive(tmp_dir, 'zip', tmp_dir)
-            out = read_bytes_stream(os.path.abspath(tmp_dir + '.zip'))
+            out = path_to_open_binary_file(os.path.abspath(tmp_dir + '.zip'))
             content_type = 'application/zip'
             filename = name + '.zip'
             return out, content_type, filename
@@ -201,7 +207,7 @@ class ConvertedFormat(models.Model):
         Export,
         related_name='converted_formats',
         on_delete=models.CASCADE,
-        help_text='Export snapshot for this converted file'
+        help_text='Export snapshot for this converted file',
     )
     file = models.FileField(
         upload_to=settings.DELAYED_EXPORT_DIR,
@@ -212,14 +218,8 @@ class ConvertedFormat(models.Model):
         choices=Status.choices,
         default=Status.CREATED,
     )
-    traceback = models.TextField(
-        null=True,
-        blank=True,
-        help_text='Traceback report in case of errors'
-    )
-    export_type = models.CharField(
-        max_length=64
-    )
+    traceback = models.TextField(null=True, blank=True, help_text='Traceback report in case of errors')
+    export_type = models.CharField(max_length=64)
     created_at = models.DateTimeField(
         _('created at'),
         null=True,

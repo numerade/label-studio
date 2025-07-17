@@ -8,27 +8,11 @@ meta_description: Customize Label Studio with the Taxonomy tag and use hierarchi
 
 The `Taxonomy` tag is used to create one or more hierarchical classifications, storing both choice selections and their ancestors in the results. Use for nested classification tasks with the `Choice` tag.
 
+You can define nested classifications using the `Choice` tag, or retrieve external classifications using the `apiUrl` parameter. For more information on these options, see the [Taxonomy template page](/templates/taxonomy).
+
 Use with the following data types: audio, image, HTML, paragraphs, text, time series, video.
 
-[^1]: `fflag_feat_front_lsdv_4583_multi_image_segmentation_short` should be enabled for `perItem` functionality
-
-### Parameters
-
-| Param | Type | Default | Description |
-| --- | --- | --- | --- |
-| name | <code>string</code> |  | Name of the element |
-| toName | <code>string</code> |  | Name of the element that you want to classify |
-| [leafsOnly] | <code>boolean</code> | <code>false</code> | Allow annotators to select only leaf nodes of taxonomy |
-| [showFullPath] | <code>boolean</code> | <code>false</code> | Whether to show the full path of selected items |
-| [pathSeparator] | <code>string</code> | <code>&quot;/&quot;</code> | Separator to show in the full path |
-| [maxUsages] | <code>number</code> |  | Maximum number of times a choice can be selected per task |
-| [maxWidth] | <code>number</code> |  | Maximum width for dropdown |
-| [minWidth] | <code>number</code> |  | Minimum width for dropdown |
-| [required] | <code>boolean</code> | <code>false</code> | Whether taxonomy validation is required |
-| [requiredMessage] | <code>string</code> |  | Message to show if validation fails |
-| [placeholder=] | <code>string</code> |  | What to display as prompt on the input |
-| [perRegion] | <code>boolean</code> |  | Use this tag to classify specific regions instead of the whole object |
-| [perItem] | <code>boolean</code> |  | Use this tag to classify specific items inside the object instead of the whole object[^1] |
+{% insertmd includes/tags/taxonomy.md %}
 
 ### Example
 

@@ -25,8 +25,8 @@
 /* GUTTER */
 
 .CodeMirror-gutters {
-  border-right: 1px solid #ddd;
-  background-color: #f7f7f7;
+  border-right: 1px solid var(--color-neutral-border);
+  background-color: var(--color-neutral-surface);
   white-space: nowrap;
 }
 .CodeMirror-linenumbers {
@@ -43,13 +43,13 @@
   color: black;
 }
 .CodeMirror-guttermarker-subtle {
-  color: #999;
+  color: var(--color-neutral-content-subtlest);
 }
 
 /* CURSOR */
 
 .CodeMirror-cursor {
-  border-left: 1px solid black;
+  border-left: 1px solid var(--color-neutral-inverted-content);
   border-right: none;
   width: 0;
 }
@@ -134,16 +134,16 @@
 /* DEFAULT THEME */
 
 .cm-s-default .cm-header {
-  color: blue;
+  color: var(--color-accent-grape-bold);
 }
 .cm-s-default .cm-quote {
-  color: #090;
+  color: var(--color-accent-kale-bold);
 }
 .cm-negative {
-  color: #d44;
+  color: var(--color-negative-content);
 }
 .cm-positive {
-  color: #292;
+  color: var(--color-positive-content);
 }
 .cm-header,
 .cm-strong {
@@ -160,16 +160,16 @@
 }
 
 .cm-s-default .cm-keyword {
-  color: #708;
+  color: #E6694E;
 }
 .cm-s-default .cm-atom {
-  color: #219;
+  color: #617ADA;
 }
 .cm-s-default .cm-number {
-  color: #164;
+  color: #34988D;
 }
 .cm-s-default .cm-def {
-  color: #00f;
+  color: #617ADA;
 }
 .cm-s-default .cm-variable,
 .cm-s-default .cm-punctuation,
@@ -177,51 +177,51 @@
 .cm-s-default .cm-operator {
 }
 .cm-s-default .cm-variable-2 {
-  color: #05a;
+  color: #12110D;
 }
 .cm-s-default .cm-variable-3,
 .cm-s-default .cm-type {
-  color: #085;
+  color: var(--color-accent-kale-bold);
 }
 .cm-s-default .cm-comment {
-  color: #a50;
+  color: var(--color-accent-canteloupe-bold);
 }
 .cm-s-default .cm-string {
-  color: #a11;
+  color: var(--color-accent-plum-bold);
 }
 .cm-s-default .cm-string-2 {
-  color: #f50;
+  color: var(--color-accent-persimmon-bold);
 }
 .cm-s-default .cm-meta {
-  color: #555;
+  color: #6B6860;
 }
 .cm-s-default .cm-qualifier {
-  color: #555;
+  color: #6B6860;
 }
 .cm-s-default .cm-builtin {
-  color: #30a;
+  color: #12110D;
 }
 .cm-s-default .cm-bracket {
-  color: #997;
+  color: #6B6860;
 }
 .cm-s-default .cm-tag {
-  color: #170;
+  color: #34988D;
 }
 .cm-s-default .cm-attribute {
-  color: #00c;
+  color: #617ADA;
 }
 .cm-s-default .cm-hr {
-  color: #999;
+  color: #6B6860;
 }
 .cm-s-default .cm-link {
-  color: #00c;
+  color: #617ADA;
 }
 
 .cm-s-default .cm-error {
-  color: #f00;
+  color: var(--color-negative-content);
 }
 .cm-invalidchar {
-  color: #f00;
+  color: var(--color-negative-content);
 }
 
 .CodeMirror-composing {
@@ -231,10 +231,10 @@
 /* Default styles for common addons */
 
 div.CodeMirror span.CodeMirror-matchingbracket {
-  color: #0b0;
+  color: var(--color-positive-content);
 }
 div.CodeMirror span.CodeMirror-nonmatchingbracket {
-  color: #a22;
+  color: var(--color-negative-content);
 }
 .CodeMirror-matchingtag {
   background: rgba(255, 150, 0, 0.3);
@@ -251,7 +251,7 @@ div.CodeMirror span.CodeMirror-nonmatchingbracket {
 .CodeMirror {
   position: relative;
   overflow: hidden;
-  background: white;
+  background: var(--color-neutral-background);
 }
 
 .CodeMirror-scroll {

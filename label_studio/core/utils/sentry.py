@@ -1,19 +1,19 @@
-from django.conf import *
+from django.conf import settings
 
 
 def event_processor(event, hint):
-    # skip all transactions without errors
+    # skip all transactions without exceptions, unless it's a log record
     if 'exc_info' not in hint:
+        # special flag inside of logger.error(..., extra={'sentry_force': True}) to force sentry to log the error
+        if 'log_record' in hint and event.get('extra', {}).get('sentry_force', False):
+            return event
+
         return None
 
     # skip specified exceptions
     exceptions = event.get('exception', {}).get('values', [{}])
     last = exceptions[-1]
-    if last.get('type') in [
-        'Http404', 'NotAuthenticated', 'AuthenticationFailed', 'NotFound', 'XMLSyntaxError',
-        'FileUpload.DoesNotExist',
-        'Forbidden', 'KeyboardInterrupt'
-    ]:
+    if last.get('type') in settings.SENTRY_IGNORED_EXCEPTIONS:
         return None
 
     # sentry ignored factory class
@@ -28,7 +28,7 @@ def event_processor(event, hint):
             'could not connect to server',
             'the database system is shutting down',
             'remaining connection slots are reserved for non-replication superuser connections',
-            'unable to open database file'
+            'unable to open database file',
         ]
         for message in messages:
             if message in value:
@@ -48,9 +48,13 @@ def event_processor(event, hint):
         return None
 
     # skip transactions by urls
-    if event.get("transaction") in [
-        '/static/{path}', '/dm/{path}', '/react-app/{path}', '/label-studio-frontend/{path}', '/favicon.ico',
-        '/health'
+    if event.get('transaction') in [
+        '/static/{path}',
+        '/dm/{path}',
+        '/react-app/{path}',
+        '/label-studio-frontend/{path}',
+        '/favicon.ico',
+        '/health',
     ]:
         return None
 
@@ -65,6 +69,7 @@ def init_sentry(release_name, release_version):
         if settings.SENTRY_REDIS_ENABLED:
             from sentry_sdk.integrations.redis import RedisIntegration
             from sentry_sdk.integrations.rq import RqIntegration
+
             advanced = [RedisIntegration(), RqIntegration()]
         else:
             advanced = []
@@ -78,5 +83,5 @@ def init_sentry(release_name, release_version):
             traces_sample_rate=settings.SENTRY_RATE,
             send_default_pii=True,
             environment=settings.SENTRY_ENVIRONMENT,
-            release=release_name + '@' + str(release_version)
+            release=release_name + '@' + str(release_version),
         )

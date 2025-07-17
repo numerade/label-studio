@@ -110,17 +110,50 @@ Review the full list of JSON properties in the [API documentation](api.html).
 | annotations.id | Identifier for the completed task. |
 | annotations.lead_time | Time in seconds to label the task. |
 | annotations.result | Array containing the results of the labeling or annotation task. |
-| result.id | Identifier for the specific annotation result for this task.|
+| annotations.updated_at | Timestamp for when the annotation is created or modified. |
+| annotations.completed_at | Timestamp for when the annotation is created or submitted. |
+| annotations.completed_by | User ID of the user that created the annotation. Matches the list order of users on the People page on the Label Studio UI. See [Specifying annotators during import](#specifying-annotators-during-import) for import format options. |
+| annotations.was_cancelled | Boolean. Details about whether or not the annotation was skipped, or cancelled. | 
+| result.id | Identifier for the specific annotation result for this task. Use it to combine together regions from different control tags, e.g. `<Labels>` and `<Rectangle>` |
+| result.parentID | (Optional) Reference to the parent region result.id. It organizes regions into a hierarchical tree in the Region panel |
 | result.from_name | Name of the tag used to label the region. See [control tags](/tags). |
 | result.to_name | Name of the object tag that provided the region to be labeled. See [object tags](/tags). |
 | result.type | Type of tag used to annotate the task. |
 | result.value | Tag-specific value that includes details of the result of labeling the task. The value structure depends on the tag for the label. For more information, see [Explore each tag](/tags). |
-| annotations.completed_by | User ID of the user that created the annotation. Matches the list order of users on the People page on the Label Studio UI. |
-| annotations.was_cancelled | Boolean. Details about whether or not the annotation was skipped, or cancelled. | 
-| drafts | Array of draft annotations. Follows similar format as the annotations array. Included only for tasks exported as a snapshot [from the UI](#Export-snapshots-using-the-UI) or [using the API](#Export-snapshots-using-the-API).
+| drafts | Array of draft annotations. Follows similar format as the annotations array. Included only for tasks exported as a snapshot [from the UI](#Export-snapshots-using-the-UI) or [using the API](#Export-snapshots-using-the-Snapshot-API).
 | predictions | Array of machine learning predictions. Follows the same format as the annotations array, with one additional parameter. |
 | predictions.score | The overall score of the result, based on the probabilistic output, confidence level, or other. | 
+| task.updated_at | Timestamp for when the task or any of its annotations or reviews are created, updated, or deleted. |
 
+### Specifying annotators during import {#specifying-annotators-during-import}
+
+When importing annotations to Label Studio, you can control which users are assigned as annotators by using the `completed_by` field within the annotation object:
+
+```json
+// Option 1: No annotator specified (uses importing user)
+{
+  "result": [...],
+  "completed_by": null
+}
+
+// Option 2: Specify by email
+{
+  "result": [...],
+  "completed_by": {
+    "email": "annotator@example.com"
+  }
+}
+
+// Option 3: Specify by ID
+{
+  "result": [...],
+  "completed_by": 42
+}
+```
+
+The system will match the email or ID to an existing user in your organization, or fall back to the importing user if configured to allow this.
+
+Note that this applies when importing via the Label Studio UI, the API, or the SDK. 
 
 <div class="enterprise-only">
 

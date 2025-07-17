@@ -1,5 +1,5 @@
-"""This file and its contents are licensed under the Apache License 2.0. Please see the included NOTICE for copyright information and LICENSE for a copy of the license.
-"""
+"""This file and its contents are licensed under the Apache License 2.0. Please see the included NOTICE for copyright information and LICENSE for a copy of the license."""
+
 """
 Django Base settings for Label Studio.
 
@@ -9,13 +9,15 @@ https://docs.djangoproject.com/en/3.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/3.1/ref/settings/
 """
+import json
+import logging
 import os
 import re
-import logging
-import json
-
 from datetime import timedelta
-from label_studio.core.utils.params import get_bool_env, get_env
+
+from django.core.exceptions import ImproperlyConfigured
+
+from label_studio.core.utils.params import get_bool_env, get_env_list
 
 formatter = 'standard'
 JSON_LOG = get_bool_env('JSON_LOG', False)
@@ -55,9 +57,9 @@ LOGGING = {
             # 'propagate': True,
         },
         'django_auth_ldap': {'level': os.environ.get('LOG_LEVEL', 'DEBUG')},
-        "rq.worker": {
-            "handlers": ["console"],
-            "level": os.environ.get('LOG_LEVEL', 'INFO'),
+        'rq.worker': {
+            'handlers': ['console'],
+            'level': os.environ.get('LOG_LEVEL', 'INFO'),
         },
         'ddtrace': {
             'handlers': ['console'],
@@ -75,7 +77,7 @@ if not logging.getLogger().hasHandlers():
     logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 
 from label_studio.core.utils.io import get_data_dir
-from label_studio.core.utils.params import get_bool_env, get_env, get_env_list_int
+from label_studio.core.utils.params import get_bool_env, get_env
 
 logger = logging.getLogger(__name__)
 SILENCED_SYSTEM_CHECKS = []
@@ -85,11 +87,11 @@ HOSTNAME = get_env('HOST', '')
 if HOSTNAME:
     if not HOSTNAME.startswith('http://') and not HOSTNAME.startswith('https://'):
         logger.info(
-            "! HOST variable found in environment, but it must start with http:// or https://, ignore it: %s", HOSTNAME
+            '! HOST variable found in environment, but it must start with http:// or https://, ignore it: %s', HOSTNAME
         )
         HOSTNAME = ''
     else:
-        logger.info("=> Hostname correctly is set to: %s", HOSTNAME)
+        logger.info('=> Hostname correctly is set to: %s', HOSTNAME)
         if HOSTNAME.endswith('/'):
             HOSTNAME = HOSTNAME[0:-1]
 
@@ -100,24 +102,44 @@ if HOSTNAME:
             match = pattern.match(HOSTNAME)
             FORCE_SCRIPT_NAME = match.group(3)
             if FORCE_SCRIPT_NAME:
-                logger.info("=> Django URL prefix is set to: %s", FORCE_SCRIPT_NAME)
+                logger.info('=> Django URL prefix is set to: %s', FORCE_SCRIPT_NAME)
+
+FRONTEND_HMR = get_bool_env('FRONTEND_HMR', False)
+FRONTEND_HOSTNAME = get_env('FRONTEND_HOSTNAME', 'http://localhost:8010' if FRONTEND_HMR else HOSTNAME)
+
+DOMAIN_FROM_REQUEST = get_bool_env('DOMAIN_FROM_REQUEST', False)
+
+if DOMAIN_FROM_REQUEST:
+    # in this mode HOSTNAME can be only subpath
+    if HOSTNAME and not HOSTNAME.startswith('/'):
+        raise ImproperlyConfigured('LABEL_STUDIO_HOST must be a subpath if DOMAIN_FROM_REQUEST is True')
 
 INTERNAL_PORT = '8080'
-
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = '$(fefwefwef13;LFK{P!)@#*!)kdsjfWF2l+i5e3t(8a1n'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = get_bool_env('DEBUG', True)
 DEBUG_MODAL_EXCEPTIONS = get_bool_env('DEBUG_MODAL_EXCEPTIONS', True)
 
+# Whether to verify SSL certs when making external requests, eg in the uploader
+# ⚠️ Turning this off means assuming risk. ⚠️
+# Overridable at organization level via Organization#verify_ssl_certs
+VERIFY_SSL_CERTS = get_bool_env('VERIFY_SSL_CERTS', True)
+
+# 'sqlite-dll-<arch>-<version>.zip' should be hosted at this prefix
+WINDOWS_SQLITE_BINARY_HOST_PREFIX = get_env('WINDOWS_SQLITE_BINARY_HOST_PREFIX', 'https://www.sqlite.org/2023/')
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Base path for media root and other uploaded files
-BASE_DATA_DIR = get_env('BASE_DATA_DIR', get_data_dir())
+BASE_DATA_DIR = get_env('BASE_DATA_DIR')
+if BASE_DATA_DIR is None:
+    BASE_DATA_DIR = get_data_dir()
 os.makedirs(BASE_DATA_DIR, exist_ok=True)
 logger.info('=> Database and media directory: %s', BASE_DATA_DIR)
+
+# This indicates whether the code is running in a Continuous Integration environment.
+CI = get_bool_env('CI', False)
 
 # Databases
 # https://docs.djangoproject.com/en/2.1/ref/settings/#databases
@@ -172,7 +194,7 @@ if get_bool_env('GOOGLE_LOGGING_ENABLED', False):
             'client': client,
         }
         LOGGING['root']['handlers'].append('google_cloud_logging')
-    except GoogleAuthError as e:
+    except GoogleAuthError:
         logger.exception('Google Cloud Logging handler could not be setup.')
 
 INSTALLED_APPS = [
@@ -183,7 +205,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.humanize',
-    'drf_yasg',
+    'drf_spectacular',
     'corsheaders',
     'django_extensions',
     'django_rq',
@@ -191,8 +213,8 @@ INSTALLED_APPS = [
     'rules',
     'annoying',
     'rest_framework',
-    'rest_framework_swagger',
     'rest_framework.authtoken',
+    'rest_framework_simplejwt.token_blacklist',
     'drf_generators',
     'core',
     'users',
@@ -206,6 +228,10 @@ INSTALLED_APPS = [
     'ml',
     'webhooks',
     'labels_manager',
+    'ml_models',
+    'ml_model_providers',
+    'jwt_auth',
+    'session_policy',
 ]
 
 MIDDLEWARE = [
@@ -215,21 +241,22 @@ MIDDLEWARE = [
     'django.middleware.locale.LocaleMiddleware',
     'core.middleware.DisableCSRF',
     'django.middleware.csrf.CsrfViewMiddleware',
+    'core.middleware.XApiKeySupportMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'core.middleware.CommonMiddlewareAppendSlashWithoutRedirect',  # instead of 'CommonMiddleware'
-    'core.middleware.CommonMiddleware',
     'django_user_agents.middleware.UserAgentMiddleware',
     'core.middleware.SetSessionUIDMiddleware',
     'core.middleware.ContextLogMiddleware',
     'core.middleware.DatabaseIsLockedRetryMiddleware',
     'core.current_request.ThreadLocalMiddleware',
+    'jwt_auth.middleware.JWTAuthenticationMiddleware',
 ]
 
 REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework.authentication.TokenAuthentication',
+        'jwt_auth.auth.TokenAuthenticationPhaseout',
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': [
@@ -238,18 +265,25 @@ REST_FRAMEWORK = {
     ],
     'EXCEPTION_HANDLER': 'core.utils.common.custom_exception_handler',
     'DEFAULT_RENDERER_CLASSES': ('rest_framework.renderers.JSONRenderer',),
-    'DEFAULT_VERSIONING_CLASS': 'rest_framework.versioning.NamespaceVersioning',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'PAGE_SIZE': 100,
-    # 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination'
 }
-SILENCED_SYSTEM_CHECKS += ["rest_framework.W001"]
+SILENCED_SYSTEM_CHECKS += ['rest_framework.W001']
 
 # CORS & Host settings
 INTERNAL_IPS = [  # django debug toolbar for django==2.2 requirement
     '127.0.0.1',
     'localhost',
 ]
-CORS_ORIGIN_ALLOW_ALL = True
+
+# Typical secure configuration is simply set CORS_ALLOW_ALL_ORIGINS = False in the env
+if allowed_origins := get_env_list('CORS_ALLOWED_ORIGINS'):
+    CORS_ALLOWED_ORIGINS = allowed_origins
+elif allowed_origin_regexes := get_env_list('CORS_ALLOWED_ORIGIN_REGEXES'):
+    CORS_ALLOWED_ORIGIN_REGEXES = allowed_origin_regexes
+else:
+    CORS_ALLOW_ALL_ORIGINS = get_bool_env('CORS_ALLOW_ALL_ORIGINS', True)
+
 CORS_ALLOW_METHODS = [
     'DELETE',
     'GET',
@@ -258,22 +292,33 @@ CORS_ALLOW_METHODS = [
     'POST',
     'PUT',
 ]
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = get_env_list('ALLOWED_HOSTS', default=['*'])
 
 # Auth modules
 AUTH_USER_MODEL = 'users.User'
-AUTHENTICATION_BACKENDS = ['rules.permissions.ObjectPermissionBackend', 'django.contrib.auth.backends.ModelBackend', ]
+AUTHENTICATION_BACKENDS = [
+    'rules.permissions.ObjectPermissionBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
 USE_USERNAME_FOR_LOGIN = False
 
 DISABLE_SIGNUP_WITHOUT_LINK = get_bool_env('DISABLE_SIGNUP_WITHOUT_LINK', False)
+
+# Password validation settings
+AUTH_PASSWORD_MIN_LENGTH = 8
+AUTH_PASSWORD_MAX_LENGTH = 128
 
 # Password validation:
 # https://docs.djangoproject.com/en/2.1/ref/settings/#auth-password-validators
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
-    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
+    {
+        'NAME': 'users.validators.PasswordLengthValidator',
+        'OPTIONS': {
+            'min_length': AUTH_PASSWORD_MIN_LENGTH,
+            'max_length': AUTH_PASSWORD_MAX_LENGTH,
+        },
+    },
 ]
 
 # Django templates
@@ -324,34 +369,43 @@ RQ_QUEUES = {
     },
 }
 
-# Swagger: automatic API documentation
-SWAGGER_SETTINGS = {
-    'SECURITY_DEFINITIONS': {
-        'Token': {
-            'type': 'apiKey',
-            'name': 'Authorization',
-            'in': 'header',
-            'description':
-                'The token (or API key) must be passed as a request header. '
-                'You can find your user token on the User Account page in Label Studio. Example: '
-                '<br><pre><code class="language-bash">'
-                'curl https://label-studio-host/api/projects -H "Authorization: Token [your-token]"'
-                '</code></pre>'
-        }
+# drf-spectacular settings for OpenAPI 3.0 schema generation
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Label Studio API',
+    'DESCRIPTION': 'Label Studio API for data annotation and labeling',
+    'VERSION': '',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': None,
+    'SCHEMA_PATH_PREFIX_TRIM': False,
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
     },
-    'APIS_SORTER': 'alpha',
-    'SUPPORTED_SUBMIT_METHODS': ['get', 'post', 'put', 'delete', 'patch'],
-    'OPERATIONS_SORTER': 'alpha',
-
+    'AUTHENTICATION_WHITELIST': [
+        'jwt_auth.auth.TokenAuthenticationPhaseout',
+    ],
+    'CONTACT': {'url': 'https://labelstud.io'},
+    'X_LOGO': {'url': '../../static/icons/logo-black.svg'},
 }
 
 SENTRY_DSN = get_env('SENTRY_DSN', None)
-SENTRY_RATE = float(get_env('SENTRY_RATE', 0.25))
+SENTRY_RATE = float(get_env('SENTRY_RATE', 0.02))
 SENTRY_ENVIRONMENT = get_env('SENTRY_ENVIRONMENT', 'stage.opensource')
 SENTRY_REDIS_ENABLED = False
 FRONTEND_SENTRY_DSN = get_env('FRONTEND_SENTRY_DSN', None)
-FRONTEND_SENTRY_RATE = get_env('FRONTEND_SENTRY_RATE', 0.1)
+FRONTEND_SENTRY_RATE = get_env('FRONTEND_SENTRY_RATE', 0.01)
 FRONTEND_SENTRY_ENVIRONMENT = get_env('FRONTEND_SENTRY_ENVIRONMENT', 'stage.opensource')
+
+# Exceptions that should not be logged to Sentry and aren't children of drf's APIException class
+SENTRY_IGNORED_EXCEPTIONS = [
+    'Http404',
+    'XMLSyntaxError',
+    'FileUpload.DoesNotExist',
+    'Forbidden',
+    'KeyboardInterrupt',
+]
 
 ROOT_URLCONF = 'core.urls'
 WSGI_APPLICATION = 'core.wsgi.application'
@@ -378,7 +432,14 @@ STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 )
-STATICFILES_STORAGE = 'core.storage.SkipMissedManifestStaticFilesStorage'
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'core.storage.SkipMissedManifestStaticFilesStorage',
+    },
+}
 
 # Sessions and CSRF
 SESSION_COOKIE_SECURE = bool(int(get_env('SESSION_COOKIE_SECURE', False)))
@@ -388,6 +449,11 @@ CSRF_COOKIE_SECURE = bool(int(get_env('CSRF_COOKIE_SECURE', SESSION_COOKIE_SECUR
 CSRF_COOKIE_HTTPONLY = bool(int(get_env('CSRF_COOKIE_HTTPONLY', SESSION_COOKIE_SECURE)))
 CSRF_COOKIE_SAMESITE = get_env('CSRF_COOKIE_SAMESITE', 'Lax')
 
+# default value is from django docs: https://docs.djangoproject.com/en/5.1/ref/settings/#csrf-cookie-age
+# approximately 1 year
+CSRF_COOKIE_AGE = int(get_env('CSRF_COOKIE_AGE', 31449600))
+
+
 # Inactivity user sessions
 INACTIVITY_SESSION_TIMEOUT_ENABLED = bool(int(get_env('INACTIVITY_SESSION_TIMEOUT_ENABLED', True)))
 # The most time a login will last, regardless of activity
@@ -396,6 +462,8 @@ MAX_SESSION_AGE = int(get_env('MAX_SESSION_AGE', timedelta(days=14).total_second
 MAX_TIME_BETWEEN_ACTIVITY = int(get_env('MAX_TIME_BETWEEN_ACTIVITY', timedelta(days=5).total_seconds()))
 
 SSRF_PROTECTION_ENABLED = get_bool_env('SSRF_PROTECTION_ENABLED', False)
+USE_DEFAULT_BANNED_SUBNETS = get_bool_env('USE_DEFAULT_BANNED_SUBNETS', True)
+USER_ADDITIONAL_BANNED_SUBNETS = get_env_list('USER_ADDITIONAL_BANNED_SUBNETS', default=[])
 
 # user media files
 MEDIA_ROOT = os.path.join(BASE_DATA_DIR, 'media')
@@ -427,6 +495,7 @@ SUPPORTED_EXTENSIONS = set(
         '.mp4',
         '.webm',
         '.webp',
+        '.pdf',
     ]
 )
 
@@ -446,6 +515,7 @@ os.makedirs(os.path.join(BASE_DATA_DIR, MEDIA_ROOT, DELAYED_EXPORT_DIR), exist_o
 
 # file / task size limits
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(get_env('DATA_UPLOAD_MAX_MEMORY_SIZE', 250 * 1024 * 1024))
+DATA_UPLOAD_MAX_NUMBER_FILES = int(get_env('DATA_UPLOAD_MAX_NUMBER_FILES', 100))
 TASKS_MAX_NUMBER = 1000000
 TASKS_MAX_FILE_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
 
@@ -470,19 +540,26 @@ SYNC_ON_TARGET_STORAGE_CREATION = get_bool_env('SYNC_ON_TARGET_STORAGE_CREATION'
 ALLOW_IMPORT_TASKS_WITH_UNKNOWN_EMAILS = get_bool_env('ALLOW_IMPORT_TASKS_WITH_UNKNOWN_EMAILS', default=False)
 
 """ React Libraries: do not forget to change this dir in /etc/nginx/nginx.conf """
+
 # EDITOR = label-studio-frontend repository
-EDITOR_ROOT = os.path.join(BASE_DIR, '../frontend/dist/lsf')
+EDITOR_ROOT = os.path.join(BASE_DIR, '../../web/dist/libs/editor')
 # DM = data manager (included into FRONTEND due npm building, we need only version.json file from there)
-DM_ROOT = os.path.join(BASE_DIR, '../frontend/dist/dm')
+DM_ROOT = os.path.join(BASE_DIR, '../../web/dist/libs/datamanager')
 # FRONTEND = GUI for django backend
-REACT_APP_ROOT = os.path.join(BASE_DIR, '../frontend/dist/react-app')
+REACT_APP_ROOT = os.path.join(BASE_DIR, '../../web/dist/apps/labelstudio')
 
 # per project settings
 BATCH_SIZE = 1000
+# Maximum number of tasks to process in a single batch during export operations
+MAX_TASK_BATCH_SIZE = int(get_env('MAX_TASK_BATCH_SIZE', 1000))
+# Total size of task data (in bytes) to process per batch - used to calculate dynamic batch sizes
+# For example: if task data is 10MB, batch will be ~5 tasks to stay under 50MB limit
+TASK_DATA_PER_BATCH = int(get_env('TASK_DATA_PER_BATCH', 50 * 1024 * 1024))  # 50 MB in bytes
 PROJECT_TITLE_MIN_LEN = 3
 PROJECT_TITLE_MAX_LEN = 50
 LOGIN_REDIRECT_URL = '/'
-LOGIN_URL = '/'
+LOGIN_URL = '/user/login/'
+
 MIN_GROUND_TRUTH = 10
 DATA_UNDEFINED_NAME = '$undefined$'
 LICENSE = {}
@@ -492,6 +569,7 @@ LATEST_VERSION_CHECK = True
 VERSIONS_CHECK_TIME = 0
 ALLOW_ORGANIZATION_WEBHOOKS = get_bool_env('ALLOW_ORGANIZATION_WEBHOOKS', False)
 CONVERTER_DOWNLOAD_RESOURCES = get_bool_env('CONVERTER_DOWNLOAD_RESOURCES', True)
+SHOW_TRACEBACK_FOR_EXPORT_CONVERTER = get_bool_env('SHOW_TRACEBACK_FOR_EXPORT_CONVERTER', True)
 EXPERIMENTAL_FEATURES = get_bool_env('EXPERIMENTAL_FEATURES', False)
 USE_ENFORCE_CSRF_CHECKS = get_bool_env('USE_ENFORCE_CSRF_CHECKS', True)  # False is for tests
 CLOUD_FILE_STORAGE_ENABLED = False
@@ -516,18 +594,33 @@ DATA_MANAGER_ANNOTATIONS_MAP = {}
 DATA_MANAGER_ACTIONS = {}
 DATA_MANAGER_CUSTOM_FILTER_EXPRESSIONS = 'data_manager.functions.custom_filter_expressions'
 DATA_MANAGER_PREPROCESS_FILTER = 'data_manager.functions.preprocess_filter'
+BULK_UPDATE_IS_LABELED = 'tasks.functions.bulk_update_is_labeled_by_overlap'
 USER_LOGIN_FORM = 'users.forms.LoginForm'
 PROJECT_MIXIN = 'projects.mixins.ProjectMixin'
 TASK_MIXIN = 'tasks.mixins.TaskMixin'
+LSE_PROJECT = None
+GET_TASKS_AGREEMENT_QUERYSET = None
 ANNOTATION_MIXIN = 'tasks.mixins.AnnotationMixin'
 ORGANIZATION_MIXIN = 'organizations.mixins.OrganizationMixin'
 USER_MIXIN = 'users.mixins.UserMixin'
+ORGANIZATION_MEMBER_MIXIN = 'organizations.mixins.OrganizationMemberMixin'
+MEMBER_PERM = 'core.api_permissions.MemberHasOwnerPermission'
+RECALCULATE_ALL_STATS = None
 GET_STORAGE_LIST = 'io_storages.functions.get_storage_list'
+STORAGE_LOAD_TASKS_JSON = 'io_storages.utils.load_tasks_json_lso'
 STORAGE_ANNOTATION_SERIALIZER = 'io_storages.serializers.StorageAnnotationSerializer'
 TASK_SERIALIZER_BULK = 'tasks.serializers.BaseTaskSerializerBulk'
 PREPROCESS_FIELD_NAME = 'data_manager.functions.preprocess_field_name'
 INTERACTIVE_DATA_SERIALIZER = 'data_export.serializers.BaseExportDataSerializerForInteractive'
+STORAGE_PERMISSION = 'io_storages.permissions.StoragePermission'
+PROJECT_IMPORT_PERMISSION = 'projects.permissions.ProjectImportPermission'
 DELETE_TASKS_ANNOTATIONS_POSTPROCESS = None
+FEATURE_FLAGS_GET_USER_REPR = 'core.feature_flags.utils.get_user_repr'
+
+# Test factories
+ORGANIZATION_FACTORY = 'organizations.tests.factories.OrganizationFactory'
+PROJECT_FACTORY = 'projects.tests.factories.ProjectFactory'
+USER_FACTORY = 'users.tests.factories.UserFactory'
 
 
 def project_delete(project):
@@ -547,6 +640,7 @@ USER_AUTH = user_auth
 COLLECT_VERSIONS = collect_versions_dummy
 
 WEBHOOK_TIMEOUT = float(get_env('WEBHOOK_TIMEOUT', 1.0))
+WEBHOOK_BATCH_SIZE = int(get_env('WEBHOOK_BATCH_SIZE', 100))
 WEBHOOK_SERIALIZERS = {
     'project': 'webhooks.serializers_for_hooks.ProjectWebhookSerializer',
     'task': 'webhooks.serializers_for_hooks.TaskWebhookSerializer',
@@ -555,16 +649,16 @@ WEBHOOK_SERIALIZERS = {
     'label_link': 'labels_manager.serializers.LabelLinkSerializer',
 }
 
-EDITOR_KEYMAP = json.dumps(get_env("EDITOR_KEYMAP"))
+EDITOR_KEYMAP = json.dumps(get_env('EDITOR_KEYMAP'))
 
 # fix a problem with Windows mimetypes for JS and PNG
 import mimetypes
 
-mimetypes.add_type("application/javascript", ".js", True)
-mimetypes.add_type("image/png", ".png", True)
+mimetypes.add_type('application/javascript', '.js', True)
+mimetypes.add_type('image/png', '.png', True)
 
 # fields name was used in DM api before
-REST_FLEX_FIELDS = {"FIELDS_PARAM": "include"}
+REST_FLEX_FIELDS = {'FIELDS_PARAM': 'include'}
 
 INTERPOLATE_KEY_FRAMES = get_env('INTERPOLATE_KEY_FRAMES', False)
 
@@ -579,8 +673,8 @@ FEATURE_FLAGS_OFFLINE = get_bool_env('FEATURE_FLAGS_OFFLINE', True)
 # default value for feature flags (if not overridden by environment or client)
 FEATURE_FLAGS_DEFAULT_VALUE = False
 
-# Whether to send analytics telemetry data
-COLLECT_ANALYTICS = get_bool_env('collect_analytics', True)
+# Whether to send analytics telemetry data. Fall back to old lowercase name for legacy compatibility.
+COLLECT_ANALYTICS = get_bool_env('COLLECT_ANALYTICS', get_bool_env('collect_analytics', True))
 
 # Strip harmful content from SVG files by default
 SVG_SECURITY_CLEANUP = get_bool_env('SVG_SECURITY_CLEANUP', False)
@@ -595,13 +689,15 @@ BATCH_JOB_RETRY_TIMEOUT = int(get_env('BATCH_JOB_RETRY_TIMEOUT', 60))
 
 FUTURE_SAVE_TASK_TO_STORAGE = get_bool_env('FUTURE_SAVE_TASK_TO_STORAGE', default=False)
 FUTURE_SAVE_TASK_TO_STORAGE_JSON_EXT = get_bool_env('FUTURE_SAVE_TASK_TO_STORAGE_JSON_EXT', default=True)
-STORAGE_IN_PROGRESS_TIMER = get_env('STORAGE_IN_PROGRESS_TIMER', 5.0)
+STORAGE_IN_PROGRESS_TIMER = float(get_env('STORAGE_IN_PROGRESS_TIMER', 5.0))
+STORAGE_EXPORT_CHUNK_SIZE = int(get_env('STORAGE_EXPORT_CHUNK_SIZE', 100))
 
 USE_NGINX_FOR_EXPORT_DOWNLOADS = get_bool_env('USE_NGINX_FOR_EXPORT_DOWNLOADS', False)
+USE_NGINX_FOR_UPLOADS = get_bool_env('USE_NGINX_FOR_UPLOADS', True)
 
 if get_env('MINIO_STORAGE_ENDPOINT') and not get_bool_env('MINIO_SKIP', False):
     CLOUD_FILE_STORAGE_ENABLED = True
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    STORAGES['default']['BACKEND'] = 'storages.backends.s3boto3.S3Boto3Storage'
     AWS_STORAGE_BUCKET_NAME = get_env('MINIO_STORAGE_BUCKET_NAME')
     AWS_ACCESS_KEY_ID = get_env('MINIO_STORAGE_ACCESS_KEY')
     AWS_SECRET_ACCESS_KEY = get_env('MINIO_STORAGE_SECRET_KEY')
@@ -612,9 +708,9 @@ if get_env('MINIO_STORAGE_ENDPOINT') and not get_bool_env('MINIO_SKIP', False):
     AWS_S3_URL_PROTOCOL = 'http:' if HOSTNAME.startswith('http://') else 'https:'
     AWS_S3_CUSTOM_DOMAIN = HOSTNAME.replace('http://', '').replace('https://', '') + '/data'
 
-if get_env('STORAGE_TYPE') == "s3":
+if get_env('STORAGE_TYPE') == 's3':
     CLOUD_FILE_STORAGE_ENABLED = True
-    DEFAULT_FILE_STORAGE = 'core.storage.CustomS3Boto3Storage'
+    STORAGES['default']['BACKEND'] = 'core.storage.CustomS3Boto3Storage'
     if get_env('STORAGE_AWS_ACCESS_KEY_ID'):
         AWS_ACCESS_KEY_ID = get_env('STORAGE_AWS_ACCESS_KEY_ID')
     if get_env('STORAGE_AWS_SECRET_ACCESS_KEY'):
@@ -630,20 +726,20 @@ if get_env('STORAGE_TYPE') == "s3":
     AWS_S3_VERIFY = get_env('STORAGE_AWS_S3_VERIFY', None)
     if AWS_S3_VERIFY == 'false' or AWS_S3_VERIFY == 'False' or AWS_S3_VERIFY == '0':
         AWS_S3_VERIFY = False
+    AWS_S3_SIGNATURE_VERSION = get_env('STORAGE_AWS_S3_SIGNATURE_VERSION', None)
 
-if get_env('STORAGE_TYPE') == "azure":
+if get_env('STORAGE_TYPE') == 'azure':
     CLOUD_FILE_STORAGE_ENABLED = True
-    DEFAULT_FILE_STORAGE = 'core.storage.CustomAzureStorage'
+    STORAGES['default']['BACKEND'] = 'core.storage.CustomAzureStorage'
     AZURE_ACCOUNT_NAME = get_env('STORAGE_AZURE_ACCOUNT_NAME')
     AZURE_ACCOUNT_KEY = get_env('STORAGE_AZURE_ACCOUNT_KEY')
     AZURE_CONTAINER = get_env('STORAGE_AZURE_CONTAINER_NAME')
     AZURE_URL_EXPIRATION_SECS = int(get_env('STORAGE_AZURE_URL_EXPIRATION_SECS', '86400'))
     AZURE_LOCATION = get_env('STORAGE_AZURE_FOLDER', default='')
 
-if get_env('STORAGE_TYPE') == "gcs":
+if get_env('STORAGE_TYPE') == 'gcs':
     CLOUD_FILE_STORAGE_ENABLED = True
-    # DEFAULT_FILE_STORAGE = 'storages.backends.gcloud.GoogleCloudStorage'
-    DEFAULT_FILE_STORAGE = 'core.storage.AlternativeGoogleCloudStorage'
+    STORAGES['default']['BACKEND'] = 'core.storage.AlternativeGoogleCloudStorage'
     GS_PROJECT_ID = get_env('STORAGE_GCS_PROJECT_ID')
     GS_BUCKET_NAME = get_env('STORAGE_GCS_BUCKET_NAME')
     GS_EXPIRATION = timedelta(seconds=int(get_env('STORAGE_GCS_EXPIRATION_SECS', '86400')))
@@ -652,7 +748,115 @@ if get_env('STORAGE_TYPE') == "gcs":
 
 CSRF_TRUSTED_ORIGINS = get_env('CSRF_TRUSTED_ORIGINS', [])
 if CSRF_TRUSTED_ORIGINS:
-    CSRF_TRUSTED_ORIGINS = CSRF_TRUSTED_ORIGINS.split(",")
+    CSRF_TRUSTED_ORIGINS = CSRF_TRUSTED_ORIGINS.split(',')
+
+# Custom S3 endpoints on these domains will get detailed error reporting
+S3_TRUSTED_STORAGE_DOMAINS = get_env_list(
+    'S3_TRUSTED_STORAGE_DOMAINS',
+    [
+        'amazonaws.com',
+        'scw.cloud',
+        'yandexcloud.net',
+        'digitaloceanspaces.com',
+        'orange-business.com',
+        'computecanada.ca',
+        'cloudflarestorage.com',
+        'wasabisys.com',
+        'oracle.com',
+        'amazon.com',
+        'appdomain.cloud',
+    ],
+)
 
 REAL_HOSTNAME = os.getenv('HOSTNAME')  # we have to use getenv, because we don't use LABEL_STUDIO_ prefix
 GCS_CLOUD_STORAGE_FORCE_DEFAULT_CREDENTIALS = get_bool_env('GCS_CLOUD_STORAGE_FORCE_DEFAULT_CREDENTIALS', False)
+PUBLIC_API_DOCS = get_bool_env('PUBLIC_API_DOCS', False)
+
+# By default, we disallow filters with foreign keys in data manager for security reasons.
+# Add to this list (either here in code, or via the env) to allow specific filters that rely on foreign keys.
+DATA_MANAGER_FILTER_ALLOWLIST = list(
+    set(get_env_list('DATA_MANAGER_FILTER_ALLOWLIST') + ['updated_by__active_organization'])
+)
+
+if ENABLE_CSP := get_bool_env('ENABLE_CSP', True):
+    CSP_DEFAULT_SRC = (
+        "'self'",
+        "'report-sample'",
+    )
+    CSP_STYLE_SRC = ("'self'", "'report-sample'", "'unsafe-inline'")
+    CSP_SCRIPT_SRC = (
+        "'self'",
+        "'report-sample'",
+        "'unsafe-inline'",
+        'blob:',
+        'browser.sentry-cdn.com',
+        'https://*.googletagmanager.com',
+    )
+    CSP_IMG_SRC = (
+        "'self'",
+        "'report-sample'",
+        'data:',
+        'https://*.google-analytics.com',
+        'https://*.googletagmanager.com',
+        'https://*.google.com',
+    )
+    CSP_CONNECT_SRC = (
+        "'self'",
+        "'report-sample'",
+        'https://*.google-analytics.com',
+        'https://*.analytics.google.com',
+        'https://analytics.google.com',
+        'https://*.googletagmanager.com',
+        'https://*.g.double' + 'click.net',  # hacky way of suppressing codespell complaint
+        'https://*.ingest.sentry.io',
+    )
+    # Note that this will be overridden to real CSP for views that use the override_report_only_csp decorator
+    CSP_REPORT_ONLY = get_bool_env('LS_CSP_REPORT_ONLY', True)
+    CSP_REPORT_URI = get_env('LS_CSP_REPORT_URI', None)
+    CSP_INCLUDE_NONCE_IN = ['script-src', 'default-src']
+
+    MIDDLEWARE.append('core.middleware.HumanSignalCspMiddleware')
+
+CLOUD_STORAGE_CHECK_FOR_RECORDS_PAGE_SIZE = get_env('CLOUD_STORAGE_CHECK_FOR_RECORDS_PAGE_SIZE', 10000)
+CLOUD_STORAGE_CHECK_FOR_RECORDS_TIMEOUT = get_env('CLOUD_STORAGE_CHECK_FOR_RECORDS_TIMEOUT', 60)
+
+CONTEXTLOG_SYNC = False
+TEST_ENVIRONMENT = get_bool_env('TEST_ENVIRONMENT', False)
+DEBUG_CONTEXTLOG = get_bool_env('DEBUG_CONTEXTLOG', False)
+
+_REDIS_SSL_CERTS_REQS = get_env('REDIS_SSL_CERTS_REQS', 'required')
+REDIS_SSL_SETTINGS = {
+    'ssl_cert_reqs': None if _REDIS_SSL_CERTS_REQS.lower() == 'none' else _REDIS_SSL_CERTS_REQS,
+    'ssl_ca_certs': get_env('REDIS_SSL_CA_CERTS', None),
+    'ssl_keyfile': get_env('REDIS_SSL_KEYFILE', None),
+    'ssl_certfile': get_env('REDIS_SSL_CERTFILE', None),
+}
+
+OPENAI_API_VERSION = get_env('OPENAI_API_VERSION', '2024-06-01')
+APPEND_SLASH = False
+
+if CI:
+    INSTALLED_APPS += ['django_migration_linter']
+    MIGRATION_LINTER_OPTIONS = {
+        'no_cache': True,
+        'ignore_name': '0002_auto_20210304_1457',
+        'sql-analyser': 'postgresql',
+    }
+
+LOGOUT_REDIRECT_URL = get_env('LOGOUT_REDIRECT_URL', None)
+
+# Enable legacy tokens (useful for running with a pre-existing token via `LABEL_STUDIO_USER_TOKEN`)
+LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN = get_bool_env('LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN', False)
+RESOLVER_PROXY_BUFFER_SIZE = int(get_env('RESOLVER_PROXY_BUFFER_SIZE', 512 * 1024))
+RESOLVER_PROXY_TIMEOUT = int(get_env('RESOLVER_PROXY_TIMEOUT', 20))
+RESOLVER_PROXY_MAX_RANGE_SIZE = int(get_env('RESOLVER_PROXY_MAX_RANGE_SIZE', 8 * 1024 * 1024))
+RESOLVER_PROXY_GCS_DOWNLOAD_URL = get_env(
+    'RESOLVER_PROXY_GCS_DOWNLOAD_URL',
+    'https://storage.googleapis.com/download/storage/v1/b/{bucket_name}/o/{blob_name}?alt=media',
+)
+RESOLVER_PROXY_GCS_HTTP_TIMEOUT = int(get_env('RESOLVER_PROXY_GCS_HTTP_TIMEOUT', 5))
+RESOLVER_PROXY_ENABLE_ETAG_CACHE = get_bool_env('RESOLVER_PROXY_ENABLE_ETAG_CACHE', True)
+RESOLVER_PROXY_CACHE_TIMEOUT = int(get_env('RESOLVER_PROXY_CACHE_TIMEOUT', 3600))
+
+# Advanced validator for ImportStorageSerializer in enterprise
+IMPORT_STORAGE_SERIALIZER_VALIDATE = None

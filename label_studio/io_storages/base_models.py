@@ -1,34 +1,41 @@
 """This file and its contents are licensed under the Apache License 2.0. Please see the included NOTICE for copyright information and LICENSE for a copy of the license.
 """
 import base64
-import rq
+import concurrent.futures
+import itertools
 import json
 import logging
-import django_rq
-import rq.exceptions
+import os
 import traceback as tb
-
-from rq.job import Job
-from django_rq import job
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+from datetime import datetime
+from typing import Union
 from urllib.parse import urljoin
 
-from django.utils import timezone
-from django.db import models, transaction
-from django.shortcuts import reverse
-from django.utils.translation import gettext_lazy as _
-from django.conf import settings
-from django.db.models import JSONField
-from django.contrib.auth.models import AnonymousUser
-from datetime import datetime
-
-from tasks.models import Task, Annotation
-from tasks.serializers import PredictionSerializer, AnnotationSerializer
-from data_export.serializers import ExportDataSerializer
-from core.redis import is_job_in_queue, redis_connected, is_job_on_worker
-from core.utils.common import load_func
+import django_rq
+import rq
+import rq.exceptions
 from core.feature_flags import flag_set
-from io_storages.utils import get_uri_via_regex
+from core.redis import is_job_in_queue, is_job_on_worker, redis_connected
+from core.utils.common import load_func
+from data_export.serializers import ExportDataSerializer
+from django.conf import settings
+from django.contrib.auth.models import AnonymousUser
+from django.db import models, transaction
+from django.db.models import JSONField
+from django.shortcuts import reverse
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+from django_rq import job
+from io_storages.utils import StorageObject, get_uri_via_regex, parse_bucket_uri
+from rq.job import Job
+from tasks.models import Annotation, Task
+from tasks.serializers import AnnotationSerializer, PredictionSerializer
+from webhooks.models import WebhookAction
+from webhooks.utils import emit_webhooks_for_instance
 
+from .exceptions import UnsupportedFileFormatError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +45,7 @@ class StorageInfo(models.Model):
     StorageInfo helps to understand storage status and progress
     that happens in background jobs
     """
+
     class Status(models.TextChoices):
         INITIALIZED = 'initialized', _('Initialized')
         QUEUED = 'queued', _('Queued')
@@ -48,24 +56,12 @@ class StorageInfo(models.Model):
     class Meta:
         abstract = True
 
-    last_sync = models.DateTimeField(
-        _('last sync'),
-        null=True,
-        blank=True,
-        help_text='Last sync finished time'
-    )
+    last_sync = models.DateTimeField(_('last sync'), null=True, blank=True, help_text='Last sync finished time')
     last_sync_count = models.PositiveIntegerField(
-        _('last sync count'),
-        null=True,
-        blank=True,
-        help_text='Count of tasks synced last time'
+        _('last sync count'), null=True, blank=True, help_text='Count of tasks synced last time'
     )
     last_sync_job = models.CharField(
-        _('last_sync_job'),
-        null=True,
-        blank=True,
-        max_length=256,
-        help_text='Last sync job ID'
+        _('last_sync_job'), null=True, blank=True, max_length=256, help_text='Last sync job ID'
     )
 
     status = models.CharField(
@@ -73,17 +69,8 @@ class StorageInfo(models.Model):
         choices=Status.choices,
         default=Status.INITIALIZED,
     )
-    traceback = models.TextField(
-        null=True,
-        blank=True,
-        help_text='Traceback report for the last failed sync'
-    )
-    meta = JSONField(
-        'meta',
-        null=True,
-        default=dict,
-        help_text='Meta and debug information about storage processes'
-    )
+    traceback = models.TextField(null=True, blank=True, help_text='Traceback report for the last failed sync')
+    meta = JSONField('meta', null=True, default=dict, help_text='Meta and debug information about storage processes')
 
     def info_set_job(self, job_id):
         self.last_sync_job = job_id
@@ -96,10 +83,7 @@ class StorageInfo(models.Model):
         self.status = self.Status.QUEUED
 
         # reset and init meta
-        self.meta = {
-            'attempts': self.meta.get('attempts', 0) + 1,
-            'time_queued': str(timezone.now())
-        }
+        self.meta = {'attempts': self.meta.get('attempts', 0) + 1, 'time_queued': str(timezone.now())}
 
         self.save(update_fields=['last_sync_job', 'last_sync', 'last_sync_count', 'status', 'meta'])
 
@@ -176,15 +160,19 @@ class StorageInfo(models.Model):
             self.job_health_check()
 
         # in progress last ping time, job is not needed here
-        if self.status == self.Status.IN_PROGRESS and delta > settings.STORAGE_IN_PROGRESS_TIMER * 2:
+        if self.status == self.Status.IN_PROGRESS and delta > settings.STORAGE_IN_PROGRESS_TIMER * 5:
             self.status = self.Status.FAILED
-            self.traceback = "It appears the job was failed because the last ping time is too old, " \
-                             "and no traceback information is available.\n" \
-                             "This typically occurs if job was manually removed " \
-                             "or workers reloaded unexpectedly."
+            self.traceback = (
+                'It appears the job was failed because the last ping time is too old, '
+                'and no traceback information is available.\n'
+                'This typically occurs if job was manually removed '
+                'or workers reloaded unexpectedly.'
+            )
             self.save(update_fields=['status', 'traceback'])
-            logger.info(f'Storage {self} status moved to `failed` '
-                        f'because the job {self.last_sync_job} has too old ping time')
+            logger.info(
+                f'Storage {self} status moved to `failed` '
+                f'because the job {self.last_sync_job} has too old ping time'
+            )
 
     def job_health_check(self):
         Status = self.Status
@@ -202,23 +190,27 @@ class StorageInfo(models.Model):
         # this might happen when job was stopped because of OOM and on_failure wasn't called
         if job_status == 'failed':
             self.status = Status.FAILED
-            self.traceback = "It appears the job was terminated unexpectedly, " \
-                             "and no traceback information is available.\n" \
-                             "This typically occurs due to an out-of-memory (OOM) error."
+            self.traceback = (
+                'It appears the job was terminated unexpectedly, '
+                'and no traceback information is available.\n'
+                'This typically occurs due to an out-of-memory (OOM) error.'
+            )
             self.save(update_fields=['status', 'traceback'])
-            logger.info(f'Storage {self} status moved to `failed` '
-                        f'because of the failed job {self.last_sync_job}')
+            logger.info(f'Storage {self} status moved to `failed` ' f'because of the failed job {self.last_sync_job}')
 
         # job is not found in redis (maybe deleted while redeploy), storage status is still active
         elif job_status == 'not found':
             self.status = Status.FAILED
-            self.traceback = "It appears the job was not found in redis, " \
-                             "and no traceback information is available.\n" \
-                             "This typically occurs if job was manually removed " \
-                             "or workers reloaded unexpectedly."
+            self.traceback = (
+                'It appears the job was not found in redis, '
+                'and no traceback information is available.\n'
+                'This typically occurs if job was manually removed '
+                'or workers reloaded unexpectedly.'
+            )
             self.save(update_fields=['status', 'traceback'])
-            logger.info(f'Storage {self} status moved to `failed` '
-                        f'because the job {self.last_sync_job} was not found')
+            logger.info(
+                f'Storage {self} status moved to `failed` ' f'because the job {self.last_sync_job} was not found'
+            )
 
 
 class Storage(StorageInfo):
@@ -227,6 +219,8 @@ class Storage(StorageInfo):
     title = models.CharField(_('title'), null=True, blank=True, max_length=256, help_text='Cloud storage title')
     description = models.TextField(_('description'), null=True, blank=True, help_text='Cloud storage description')
     created_at = models.DateTimeField(_('created at'), auto_now_add=True, help_text='Creation time')
+
+    synchronizable = models.BooleanField(_('synchronizable'), default=True, help_text='If storage can be synced')
 
     def validate_connection(self, client=None):
         raise NotImplementedError('validate_connection is not implemented')
@@ -239,18 +233,44 @@ class ImportStorage(Storage):
     def iterkeys(self):
         return iter(())
 
-    def get_data(self, key):
+    def get_data(self, key) -> list[StorageObject]:
         raise NotImplementedError
 
     def generate_http_url(self, url):
         raise NotImplementedError
 
-    def can_resolve_url(self, url):
-        # TODO: later check to the full prefix like "url.startswith(self.path_full)"
-        # Search of occurrences inside string, e.g. for cases like "gs://bucket/file.pdf" or "<embed src='gs://bucket/file.pdf'/>"  # noqa
+    def get_bytes_stream(self, uri):
+        """Get file bytes from storage as a stream and content type.
+
+        Args:
+            uri: The URI of the file to retrieve
+
+        Returns:
+            Tuple of (BytesIO stream, content_type)
+        """
+        raise NotImplementedError
+
+    def can_resolve_url(self, url: Union[str, None]) -> bool:
+        return self.can_resolve_scheme(url)
+
+    def can_resolve_scheme(self, url: Union[str, None]) -> bool:
+        if not url:
+            return False
+        # TODO: Search for occurrences inside string, e.g. for cases like "gs://bucket/file.pdf" or "<embed src='gs://bucket/file.pdf'/>"
         _, prefix = get_uri_via_regex(url, prefixes=(self.url_scheme,))
-        if prefix == self.url_scheme:
-            return True
+        bucket_uri = parse_bucket_uri(url, self)
+
+        # If there is a prefix and the bucket matches the storage's bucket/container/path
+        if prefix == self.url_scheme and bucket_uri:
+            # bucket is used for s3 and gcs
+            if hasattr(self, 'bucket') and bucket_uri.bucket == self.bucket:
+                return True
+            # container is used for azure blob
+            if hasattr(self, 'container') and bucket_uri.bucket == self.container:
+                return True
+            # path is used for redis
+            if hasattr(self, 'path') and bucket_uri.bucket == self.path:
+                return True
         # if not found any occurrences - this Storage can't resolve url
         return False
 
@@ -272,30 +292,44 @@ class ImportStorage(Storage):
             return resolved
 
         # string: process one url
-        elif isinstance(uri, str):
+        elif isinstance(uri, str) and self.url_scheme in uri:
             try:
                 # extract uri first from task data
-                extracted_uri, extracted_storage = get_uri_via_regex(uri, prefixes=(self.url_scheme,))
-                if not extracted_storage:
+                extracted_uri, _ = get_uri_via_regex(uri, prefixes=(self.url_scheme,))
+                if not self.can_resolve_url(extracted_uri):
                     logger.debug(f'No storage info found for URI={uri}')
                     return
 
-                if self.presign and task is not None:
+                if flag_set('fflag_optic_all_optic_1938_storage_proxy', user=self.project.organization.created_by):
+                    if task is None:
+                        logger.error(f'Task is required to resolve URI={uri}', exc_info=True)
+                        raise ValueError(f'Task is required to resolve URI={uri}')
+
                     proxy_url = urljoin(
                         settings.HOSTNAME,
-                        reverse(
-                            "data_import:storage-data-presign",
-                            kwargs={"task_id": task.id}
-                        ) + f"?fileuri={base64.urlsafe_b64encode(extracted_uri.encode()).decode()}"
+                        reverse('storages:task-storage-data-resolve', kwargs={'task_id': task.id})
+                        + f'?fileuri={base64.urlsafe_b64encode(extracted_uri.encode()).decode()}',
                     )
                     return uri.replace(extracted_uri, proxy_url)
+
+                # ff off: old logic without proxy
                 else:
-                    # resolve uri to url using storages
-                    http_url = self.generate_http_url(extracted_uri)
+                    if self.presign and task is not None:
+                        proxy_url = urljoin(
+                            settings.HOSTNAME,
+                            reverse('storages:task-storage-data-presign', kwargs={'task_id': task.id})
+                            + f'?fileuri={base64.urlsafe_b64encode(extracted_uri.encode()).decode()}',
+                        )
+                        return uri.replace(extracted_uri, proxy_url)
+                    else:
+                        # this branch is our old approach:
+                        # it generates presigned URLs if storage.presign=True;
+                        # or it inserts base64 media into task data if storage.presign=False
+                        http_url = self.generate_http_url(extracted_uri)
 
                 return uri.replace(extracted_uri, http_url)
-            except Exception as exc:
-                logger.info(f'Can\'t resolve URI={uri}', exc_info=True)
+            except Exception:
+                logger.info(f"Can't resolve URI={uri}", exc_info=True)
 
     def _scan_and_create_links_v2(self):
         # Async job execution for batch of objects:
@@ -310,9 +344,12 @@ class ImportStorage(Storage):
         raise NotImplementedError
 
     @classmethod
-    def add_task(cls, data, project, maximum_annotations, max_inner_id, storage, key, link_class):
+    def add_task(cls, project, maximum_annotations, max_inner_id, storage, link_object: StorageObject, link_class):
+        link_kwargs = asdict(link_object)
+        data = link_kwargs.pop('task_data', None)
+
         # predictions
-        predictions = data.get('predictions', [])
+        predictions = data.get('predictions') or []
         if predictions:
             if 'data' not in data:
                 raise ValueError(
@@ -320,7 +357,7 @@ class ImportStorage(Storage):
                 )
 
         # annotations
-        annotations = data.get('annotations', [])
+        annotations = data.get('annotations') or []
         cancelled_annotations = 0
         if annotations:
             if 'data' not in data:
@@ -330,26 +367,35 @@ class ImportStorage(Storage):
             cancelled_annotations = len([a for a in annotations if a.get('was_cancelled', False)])
 
         if 'data' in data and isinstance(data['data'], dict):
-            data = data['data']
+            if data['data'] is not None:
+                data = data['data']
+            else:
+                data.pop('data')
 
         with transaction.atomic():
             task = Task.objects.create(
-                data=data, project=project, overlap=maximum_annotations,
-                is_labeled=len(annotations) >= maximum_annotations, total_predictions=len(predictions),
+                data=data,
+                project=project,
+                overlap=maximum_annotations,
+                is_labeled=len(annotations) >= maximum_annotations,
+                total_predictions=len(predictions),
                 total_annotations=len(annotations) - cancelled_annotations,
-                cancelled_annotations=cancelled_annotations, inner_id=max_inner_id
+                cancelled_annotations=cancelled_annotations,
+                inner_id=max_inner_id,
             )
 
-            link_class.create(task, key, storage)
-            logger.debug(f'Create {storage.__class__.__name__} link with key={key} for task={task}')
+            link_class.create(task, storage=storage, **link_kwargs)
+            logger.debug(f'Create {storage.__class__.__name__} link with {link_kwargs} for {task=}')
 
-            raise_exception = not flag_set('ff_fix_back_dev_3342_storage_scan_with_invalid_annotations',
-                                           user=AnonymousUser())
+            raise_exception = not flag_set(
+                'ff_fix_back_dev_3342_storage_scan_with_invalid_annotations', user=AnonymousUser()
+            )
 
             # add predictions
             logger.debug(f'Create {len(predictions)} predictions for task={task}')
             for prediction in predictions:
                 prediction['task'] = task.id
+                prediction['project'] = project.id
             prediction_ser = PredictionSerializer(data=predictions, many=True)
             if prediction_ser.is_valid(raise_exception=raise_exception):
                 prediction_ser.save()
@@ -358,10 +404,12 @@ class ImportStorage(Storage):
             logger.debug(f'Create {len(annotations)} annotations for task={task}')
             for annotation in annotations:
                 annotation['task'] = task.id
+                annotation['project'] = project.id
             annotation_ser = AnnotationSerializer(data=annotations, many=True)
             if annotation_ser.is_valid(raise_exception=raise_exception):
                 annotation_ser.save()
-            # FIXME: add_annotation_history / post_process_annotations should be here
+        return task
+        # FIXME: add_annotation_history / post_process_annotations should be here
 
     def _scan_and_create_links(self, link_class):
         """
@@ -376,6 +424,12 @@ class ImportStorage(Storage):
         task = self.project.tasks.order_by('-inner_id').first()
         max_inner_id = (task.inner_id + 1) if task else 1
 
+        # Check feature flag once for the entire sync process
+        check_file_extension = flag_set(
+            'fflag_fix_back_plt_804_check_file_extension_11072025_short', user=self.project.organization.created_by
+        )
+
+        tasks_for_webhook = []
         for key in self.iterkeys():
             # w/o Dataflow
             # pubsub.push(topic, key)
@@ -383,15 +437,30 @@ class ImportStorage(Storage):
             logger.debug(f'Scanning key {key}')
             self.info_update_progress(last_sync_count=tasks_created, tasks_existed=tasks_existed)
 
-            # skip if task already exists
-            if link_class.exists(key, self):
-                logger.debug(f'{self.__class__.__name__} link {key} already exists')
-                tasks_existed += 1  # update progress counter
+            # skip if key has already been synced
+            if n_tasks_linked := link_class.n_tasks_linked(key, self):
+                logger.debug(f'{self.__class__.__name__} already has {n_tasks_linked} tasks linked to {key=}')
+                tasks_existed += n_tasks_linked  # update progress counter
                 continue
 
             logger.debug(f'{self}: found new key {key}')
+
+            # Check if file should be processed as JSON based on extension
+            # Skip non-JSON files if use_blob_urls is False
+            if check_file_extension and not self.use_blob_urls:
+                _, ext = os.path.splitext(key.lower())
+                # Only process files with JSON/JSONL/PARQUET extensions
+                json_extensions = {'.json', '.jsonl', '.parquet'}
+
+                if ext and ext not in json_extensions:
+                    raise UnsupportedFileFormatError(
+                        f'File "{key}" is not a JSON/JSONL/Parquet file. Only .json, .jsonl, and .parquet files can be processed.\n'
+                        f"If you're trying to import non-JSON data (images, audio, text, etc.), "
+                        f'edit storage settings and enable "Treat every bucket object as a source file"'
+                    )
+
             try:
-                data = self.get_data(key)
+                link_objects = self.get_data(key)
             except (UnicodeDecodeError, json.decoder.JSONDecodeError) as exc:
                 logger.debug(exc, exc_info=True)
                 raise ValueError(
@@ -400,16 +469,46 @@ class ImportStorage(Storage):
                     f'"Treat every bucket object as a source file"'
                 )
 
-            self.add_task(data, self.project, maximum_annotations, max_inner_id, self, key, link_class)
-            max_inner_id += 1
+            if not flag_set('fflag_feat_dia_2092_multitasks_per_storage_link'):
+                link_objects = link_objects[:1]
 
-            # update progress counters for storage info
-            tasks_created += 1
+            for link_object in link_objects:
+                # TODO: batch this loop body with add_task -> add_tasks in a single bulk write.
+                # See DIA-2062 for prerequisites
+                task = self.add_task(
+                    self.project,
+                    maximum_annotations,
+                    max_inner_id,
+                    self,
+                    link_object,
+                    link_class=link_class,
+                )
+                max_inner_id += 1
+
+                # update progress counters for storage info
+                tasks_created += 1
+
+                # add task to webhook list
+                tasks_for_webhook.append(task.id)
+
+                # settings.WEBHOOK_BATCH_SIZE
+                # `WEBHOOK_BATCH_SIZE` sets the maximum number of tasks sent in a single webhook call, ensuring manageable payload sizes.
+                # When `tasks_for_webhook` accumulates tasks equal to/exceeding `WEBHOOK_BATCH_SIZE`, they're sent in a webhook via
+                # `emit_webhooks_for_instance`, and `tasks_for_webhook` is cleared for new tasks.
+                # If tasks remain in `tasks_for_webhook` at process end (less than `WEBHOOK_BATCH_SIZE`), they're sent in a final webhook
+                # call to ensure all tasks are processed and no task is left unreported in the webhook.
+                if len(tasks_for_webhook) >= settings.WEBHOOK_BATCH_SIZE:
+                    emit_webhooks_for_instance(
+                        self.project.organization, self.project, WebhookAction.TASKS_CREATED, tasks_for_webhook
+                    )
+                    tasks_for_webhook = []
+        if tasks_for_webhook:
+            emit_webhooks_for_instance(
+                self.project.organization, self.project, WebhookAction.TASKS_CREATED, tasks_for_webhook
+            )
 
         self.project.update_tasks_states(
-            maximum_annotations_changed=False,
-            overlap_cohort_percentage_changed=False,
-            tasks_number_changed=True
+            maximum_annotations_changed=False, overlap_cohort_percentage_changed=False, tasks_number_changed=True
         )
 
         # sync is finished, set completed status for storage info
@@ -423,9 +522,8 @@ class ImportStorage(Storage):
         if redis_connected():
             queue = django_rq.get_queue('low')
             meta = {'project': self.project.id, 'storage': self.id}
-            if (
-                    not is_job_in_queue(queue, "import_sync_background", meta=meta) and
-                    not is_job_on_worker(job_id=self.last_sync_job, queue_name='low')
+            if not is_job_in_queue(queue, 'import_sync_background', meta=meta) and not is_job_on_worker(
+                job_id=self.last_sync_job, queue_name='low'
             ):
                 self.info_set_queued()
                 sync_job = queue.enqueue(
@@ -435,7 +533,8 @@ class ImportStorage(Storage):
                     meta=meta,
                     project_id=self.project.id,
                     organization_id=self.project.organization.id,
-                    on_failure=storage_background_failure
+                    on_failure=storage_background_failure,
+                    job_timeout=settings.RQ_LONG_JOB_TIMEOUT,
                 )
                 self.info_set_job(sync_job.id)
                 logger.info(f'Storage sync background job {sync_job.id} for storage {self} has been started')
@@ -445,6 +544,8 @@ class ImportStorage(Storage):
                 self.info_set_queued()
                 import_sync_background(self.__class__, self.id)
             except Exception:
+                # needed to facilitate debugging storage-related testcases, since otherwise no exception is logged
+                logger.debug(f'Storage {self} failed', exc_info=True)
                 storage_background_failure(self)
 
     class Meta:
@@ -456,7 +557,7 @@ class ProjectStorageMixin(models.Model):
         'projects.Project',
         related_name='%(app_label)s_%(class)ss',
         on_delete=models.CASCADE,
-        help_text='A unique integer value identifying this project.'
+        help_text='A unique integer value identifying this project.',
     )
 
     def has_permission(self, user):
@@ -472,13 +573,26 @@ class ProjectStorageMixin(models.Model):
 @job('low')
 def import_sync_background(storage_class, storage_id, timeout=settings.RQ_LONG_JOB_TIMEOUT, **kwargs):
     storage = storage_class.objects.get(id=storage_id)
-    storage.scan_and_create_links()
+    try:
+        storage.scan_and_create_links()
+    except UnsupportedFileFormatError:
+        # This is an expected error when user tries to import non-JSON files without enabling blob URLs
+        # We don't want to fail the job in this case, just mark the storage as failed with a clear message
+        storage.info_set_failed()
+        # Exit gracefully without raising exception to avoid job failure
+        return
 
 
 @job('low', timeout=settings.RQ_LONG_JOB_TIMEOUT)
 def export_sync_background(storage_class, storage_id, **kwargs):
     storage = storage_class.objects.get(id=storage_id)
     storage.save_all_annotations()
+
+
+@job('low', timeout=settings.RQ_LONG_JOB_TIMEOUT)
+def export_sync_only_new_background(storage_class, storage_id, **kwargs):
+    storage = storage_class.objects.get(id=storage_id)
+    storage.save_only_new_annotations()
 
 
 def storage_background_failure(*args, **kwargs):
@@ -499,21 +613,42 @@ def storage_background_failure(*args, **kwargs):
         storage_id = args[0].id
         storage = args[0].__class__.objects.filter(id=storage_id).first()
     else:
-        raise ValueError(f"Unknown storage in {args}")
+        raise ValueError(f'Unknown storage in {args}')
 
     # save info about failure for storage info
     storage.info_set_failed()
 
 
+# note: this is available in python 3.12 , #TODO to switch to builtin function when we move to it.
+def _batched(iterable, n):
+    # batched('ABCDEFG', 3) --> ABC DEF G
+    if n < 1:
+        raise ValueError('n must be at least one')
+    it = iter(iterable)
+    while batch := tuple(itertools.islice(it, n)):
+        yield batch
+
+
 class ExportStorage(Storage, ProjectStorageMixin):
-    can_delete_objects = models.BooleanField(_('can_delete_objects'), null=True, blank=True, help_text='Deletion from storage enabled')
+    can_delete_objects = models.BooleanField(
+        _('can_delete_objects'), null=True, blank=True, help_text='Deletion from storage enabled'
+    )
+    # Use 8 threads, unless we know we only have a single core
+    # TODO from testing, more than 8 seems to cause problems. revisit to add more parallelism.
+    max_workers = min(8, (os.cpu_count() or 2) * 4)
 
     def _get_serialized_data(self, annotation):
-        if settings.FUTURE_SAVE_TASK_TO_STORAGE:
+        user = self.project.organization.created_by
+        flag = flag_set(
+            'fflag_feat_optic_650_target_storage_task_format_long', user=user, override_system_default=False
+        )
+        if settings.FUTURE_SAVE_TASK_TO_STORAGE or flag:
             # export task with annotations
             # TODO: we have to rewrite save_all_annotations, because this func will be called for each annotation
             # TODO: instead of each task, however, we have to call it only once per task
-            return ExportDataSerializer(annotation.task).data
+            expand = ['annotations.reviews', 'annotations.completed_by']
+            context = {'project': self.project}
+            return ExportDataSerializer(annotation.task, context=context, expand=expand).data
         else:
             serializer_class = load_func(settings.STORAGE_ANNOTATION_SERIALIZER)
             # deprecated functionality - save only annotation
@@ -522,38 +657,64 @@ class ExportStorage(Storage, ProjectStorageMixin):
     def save_annotation(self, annotation):
         raise NotImplementedError
 
-    def save_all_annotations(self):
+    def save_annotations(self, annotations: models.QuerySet[Annotation]):
         annotation_exported = 0
-        total_annotations = Annotation.objects.filter(project=self.project).count()
+        total_annotations = annotations.count()
         self.info_set_in_progress()
+        self.cached_user = self.project.organization.created_by
 
-        for annotation in Annotation.objects.filter(project=self.project):
-            self.save_annotation(annotation)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Batch annotations so that we update progress before having to submit every future.
+            # Updating progress in thread requires coordinating on count and db writes, so just
+            # batching to keep it simpler.
+            for annotation_batch in _batched(
+                Annotation.objects.filter(project=self.project).iterator(
+                    chunk_size=settings.STORAGE_EXPORT_CHUNK_SIZE
+                ),
+                settings.STORAGE_EXPORT_CHUNK_SIZE,
+            ):
+                futures = []
+                for annotation in annotation_batch:
+                    annotation.cached_user = self.cached_user
+                    futures.append(executor.submit(self.save_annotation, annotation))
 
-            # update progress counters
-            annotation_exported += 1
-            self.info_update_progress(
-                last_sync_count=annotation_exported,
-                total_annotations=total_annotations
+                for future in concurrent.futures.as_completed(futures):
+                    annotation_exported += 1
+                    self.info_update_progress(last_sync_count=annotation_exported, total_annotations=total_annotations)
+
+        self.info_set_completed(last_sync_count=annotation_exported, total_annotations=total_annotations)
+
+    def save_all_annotations(self):
+        self.save_annotations(Annotation.objects.filter(project=self.project))
+
+    def save_only_new_annotations(self):
+        """Do not update existing annotations, only ensure that all annotations have an ExportStorageLink"""
+        # Get the storage-specific ExportStorageLink model
+        storage_link_model = self.links.model
+        new_annotations = Annotation.objects.filter(project=self.project).exclude(
+            id__in=storage_link_model.objects.filter(storage=self, annotation__project=self.project).values(
+                'annotation_id'
             )
-
-        self.info_set_completed(
-            last_sync_count=annotation_exported,
-            total_annotations=total_annotations
         )
+        self.save_annotations(new_annotations)
 
-    def sync(self):
+    def sync(self, save_only_new_annotations: bool = False):
+        if save_only_new_annotations:
+            export_sync_fn = export_sync_only_new_background
+        else:
+            export_sync_fn = export_sync_background
+
         if redis_connected():
             queue = django_rq.get_queue('low')
             self.info_set_queued()
             sync_job = queue.enqueue(
-                export_sync_background,
+                export_sync_fn,
                 self.__class__,
                 self.id,
                 job_timeout=settings.RQ_LONG_JOB_TIMEOUT,
                 project_id=self.project.id,
                 organization_id=self.project.organization.id,
-                on_failure=storage_background_failure
+                on_failure=storage_background_failure,
             )
             self.info_set_job(sync_job.id)
             logger.info(f'Storage sync background job {sync_job.id} for storage {self} has been queued')
@@ -561,7 +722,7 @@ class ExportStorage(Storage, ProjectStorageMixin):
             try:
                 logger.info(f'Start syncing storage {self}')
                 self.info_set_queued()
-                export_sync_background(self.__class__, self.id)
+                export_sync_fn(self.__class__, self.id)
             except Exception:
                 storage_background_failure(self)
 
@@ -573,18 +734,26 @@ class ImportStorageLink(models.Model):
 
     task = models.OneToOneField('tasks.Task', on_delete=models.CASCADE, related_name='%(app_label)s_%(class)s')
     key = models.TextField(_('key'), null=False, help_text='External link key')
+
+    # This field is set to True on creation and never updated; it should not be relied upon.
     object_exists = models.BooleanField(
         _('object exists'), help_text='Whether object under external link still exists', default=True
     )
+
     created_at = models.DateTimeField(_('created at'), auto_now_add=True, help_text='Creation time')
 
-    @classmethod
-    def exists(cls, key, storage):
-        return cls.objects.filter(key=key, storage=storage.id).exists()
+    row_group = models.IntegerField(null=True, blank=True, help_text='Parquet row group')
+    row_index = models.IntegerField(null=True, blank=True, help_text='Parquet row index, or JSON[L] object index')
 
     @classmethod
-    def create(cls, task, key, storage):
-        link, created = cls.objects.get_or_create(task_id=task.id, key=key, storage=storage, object_exists=True)
+    def n_tasks_linked(cls, key, storage):
+        return cls.objects.filter(key=key, storage=storage.id).count()
+
+    @classmethod
+    def create(cls, task, key, storage, row_index=None, row_group=None):
+        link, created = cls.objects.get_or_create(
+            task_id=task.id, key=key, row_index=row_index, row_group=row_group, storage=storage, object_exists=True
+        )
         return link
 
     class Meta:
@@ -593,7 +762,7 @@ class ImportStorageLink(models.Model):
 
 class ExportStorageLink(models.Model):
 
-    annotation = models.OneToOneField(
+    annotation = models.ForeignKey(
         'tasks.Annotation', on_delete=models.CASCADE, related_name='%(app_label)s_%(class)s'
     )
     object_exists = models.BooleanField(
@@ -604,9 +773,18 @@ class ExportStorageLink(models.Model):
 
     @staticmethod
     def get_key(annotation):
-        if settings.FUTURE_SAVE_TASK_TO_STORAGE:
-            return str(annotation.task.id) + '.json' if settings.FUTURE_SAVE_TASK_TO_STORAGE_JSON_EXT else ''
-        return str(annotation.id)
+        # get user who created the organization explicitly using filter/values_list to avoid prefetching
+        user = getattr(annotation, 'cached_user', None)
+        # when signal for annotation save is called, user is not cached
+        if user is None:
+            user = annotation.project.organization.created_by
+        flag = flag_set('fflag_feat_optic_650_target_storage_task_format_long', user=user)
+
+        if settings.FUTURE_SAVE_TASK_TO_STORAGE or flag:
+            ext = '.json' if settings.FUTURE_SAVE_TASK_TO_STORAGE_JSON_EXT or flag else ''
+            return str(annotation.task.id) + ext
+        else:
+            return str(annotation.id)
 
     @property
     def key(self):

@@ -2,18 +2,18 @@
 title: Start Label Studio
 type: guide
 tier: opensource
-order: 99
-order_enterprise: 99
-meta_title: Start Commands for Label Studio
+order: 93
+order_enterprise: 0
+meta_title: Start commands for Label Studio
 meta_description: Documentation for starting Label Studio and configuring the environment to use Label Studio with your machine learning or data science project. 
-section: "Get started"
+section: "Install & Setup"
 ---
 
 After you install Label Studio, start the server to start using it. 
 
 ```bash
 label-studio start
-```
+``` 
 
 By default, Label Studio starts with an SQLite database to store labeling tasks and annotations. You can specify different sources and target storage for labeling tasks and annotations using Label Studio UI or the API. See [Database storage](storedata.html) for more.
 
@@ -55,8 +55,9 @@ The following command line arguments are optional and must be specified with `la
 | `--initial-project-description` | `LABEL_STUDIO_PROJECT_DESC` | `''` | Specify a project description for a Label Studio project. See [Set up your labeling project](setup.html). |
 | `--password` | `LABEL_STUDIO_PASSWORD` | `None` | Password to use for the default user. See [Set up user accounts](signup.html). |
 | `--username` | `LABEL_STUDIO_USERNAME` | `default_user@localhost` | Username to use for the default user. See [Set up user accounts](signup.html). |
-| `--user-token` |  `LABEL_STUDIO_USER_TOKEN` | Automatically generated. | Authentication token for a user to use for the API. Must be set with a username, otherwise automatically generated. See [Set up user accounts](signup.html).
+| `--user-token` |  `LABEL_STUDIO_USER_TOKEN` | Automatically generated. | Authentication token for a user to use for the API. Must be set with a username, otherwise automatically generated. See [Set up user accounts](signup.html). |
 | `--agree-fix-sqlite` | N/A | `False` | Automatically agree to let Label Studio fix SQLite issues when using Python 3.6–3.8 on Windows operating systems. | 
+| `--enable-legacy-api-token` | `LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN` | `False` | Enable legacy API token authentication. Useful for running with a pre-existing token via `--user-token`. |
 | N/A | `LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED` | `False` | Allow Label Studio to access local file directories to import storage. See [Run Label Studio on Docker and use local storage](start.html#Run_Label_Studio_on_Docker_and_use_local_storage). |
 | N/A | `LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT` | `/` | Specify the root directory for Label Studio to use when accessing local file directories. See [Run Label Studio on Docker and use local storage](start.html#Run_Label_Studio_on_Docker_and_use_local_storage). |
 
@@ -69,7 +70,7 @@ export LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
 ```
 
 !!! note
-    If you are using docker, you can write all your [environment variables into the `.env`](https://docs.docker.com/compose/env-file/) file.
+    If you are using Docker, you can write all your [environment variables into the `.env`](https://docs.docker.com/compose/env-file/) file.
     
     
     
@@ -115,7 +116,7 @@ docker run -it -p 9001:8080 -v $(pwd)/mydata:/label-studio/data heartexlabs/labe
 !!! attention "important"
     As this is a non-root container, the mounted files and directories must have the proper permissions for the `UID 1001`.
 
-Or, if you're using Docker Compose, update the `docker-compose.yml` file that you're using to expose a different port for the NGINX server used to proxy the connection to Label Studio. For example, this portion of the [`docker-compose.yml`](https://github.com/heartexlabs/label-studio/blob/master/docker-compose.yml) file exposes port 9001 instead of port 80 for proxying Label Studio:
+Or, if you're using Docker Compose, update the `docker-compose.yml` file that you're using to expose a different port for the NGINX server used to proxy the connection to Label Studio. For example, this portion of the [`docker-compose.yml`](https://github.com/HumanSignal/label-studio/blob/develop/docker-compose.yml) file exposes port 9001 instead of port 80 for proxying Label Studio:
 ```
 ...
 nginx:
@@ -214,7 +215,7 @@ Then you can specify the required environment variables for a PostgreSQL connect
 Our Heroku manifest uses [postgresql addon](https://elements.heroku.com/addons/heroku-postgresql) out of the box.
 Please notice that the storage capacity is limited.
 
-[<img src="https://www.herokucdn.com/deploy/button.svg" height="30px">](https://heroku.com/deploy?template=https://github.com/heartexlabs/label-studio/tree/master)
+[<img src="https://www.herokucdn.com/deploy/button.svg" height="30px">](https://heroku.com/deploy?template=https://github.com/HumanSignal/label-studio/tree/master)
 
 Please notice that all uploaded data via import will be lost after a dyno replace since [filesystem is ephemeral](https://devcenter.heroku.com/articles/dynos#ephemeral-filesystem).
 Using S3 storage is recommended.

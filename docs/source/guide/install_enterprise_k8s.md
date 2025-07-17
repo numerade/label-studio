@@ -1,13 +1,14 @@
 ---
 title: Deploy Label Studio Enterprise on Kubernetes
-short: Kubernetes
+short: Install using Kubernetes
 tier: enterprise
 type: guide
-order: 108
-order_enterprise: 133
+order: 0
+order_enterprise: 69
 meta_title: Deploy Label Studio Enterprise on Kubernetes
 meta_description: Deploy Label Studio Enterprise on Kubernetes, such as on Amazon Elastic Container Service for Kubernetes, to create machine learning and data science projects in a scalable containerized environment. 
-section: "Install"
+section: "Install & Setup"
+parent_enterprise: "install_enterprise"
 
 ---
 
@@ -18,9 +19,12 @@ Your Kubernetes cluster can be self-hosted or installed somewhere such as Amazon
 <div class="enterprise-only">
 
 !!! warning
-    To install Label Studio Community Edition, see <a href="install_k8s.html">Deploy Label Studio on Kubernetes</a>. This page is specific to the version of Label Studio.
+    To install Label Studio Community Edition, see <a href="https://labelstud.io/guide/install_k8s.html">Deploy Label Studio on Kubernetes</a>. This page is specific to the Enterprise version of Label Studio.
 
 </div>
+
+!!! note
+    On-prem deployments of Label Studio Enterprise are not supported for Academic licenses. 
 
 This high-level architecture diagram that outlines the main components of a Label Studio Enterprise deployment.
 
@@ -46,7 +50,7 @@ If you want to install Label Studio Enterprise on Kubernetes and you have unrest
 9. (Optional) [Set up TLS for Redis](#Optional-set-up-TLS-for-Redis)
 10. [Use Helm to install Label Studio Enterprise on your Kubernetes cluster](#Use-Helm-to-install-Label-Studio-Enterprise-on-your-Kubernetes-cluster).
 
-If you use a proxy to access the internet from your Kubernetes cluster, or it is airgapped from the internet, see how to [Install Label Studio Enterprise without public internet access](install_airgapped.html).
+If you use a proxy to access the internet from your Kubernetes cluster, or it is airgapped from the internet, see how to [Install Label Studio Enterprise without public internet access](install_k8s_airgapped.html).
 
 ### Required software prerequisites
 
@@ -255,7 +259,7 @@ Adjust the included defaults to reflect your environment and copy these into a n
 
 </div>
 
-## Optional: set up TLS for PostgreSQL
+## Optional: Set up TLS for PostgreSQL
 To configure Label Studio Enterprise to use TLS for end-client connections with PostgreSQL, do the following:
 
 1. Enable TLS for your PostgreSQL instance and save Root TLS certificate, client certificate and its key for the next steps.
@@ -282,7 +286,7 @@ global:
 
 4. Install or upgrade Label Studio Enterprise using Helm.
 
-## Optional: set up TLS for Redis
+## Optional: Set up TLS for Redis
 To configure Label Studio Enterprise to use TLS for end-client connections with Redis, do the following:
 
 1. Enable TLS for your Redis instance and save Root TLS certificate, client certificate and its key for the next steps.
@@ -309,9 +313,57 @@ global:
 
 4. Install or upgrade Label Studio Enterprise using Helm.
 
-### Use Helm to install Label Studio Enterprise on your Kubernetes cluster
+
+## Optional: Set up username and password for Redis
+
+Use one of these options to set a password and a username for Redis:
+
+**1. Password via Kubernetes Secret**. Use this when:
+* You want to avoid embedding credentials in `values.yaml`
+* You already manage Secrets in your cluster
+* You need a simple auth without multiple Redis users and you don't have username
+
+```yaml
+global:
+  redisConfig:
+    host: "redis://redis.example.com:6379/1"
+    password:
+      secretName: "my-redis-secret"   # Kubernetes Secret name
+      secretKey: "redis-password"      # Key inside Secret
+```
+
+**2. Username + password in URL**. Use this when:
+* Redis v.7 or later, and with ACL-enabled users
+* You need a dedicated Redis user for permission scoping
+* You need a quick, throwaway setup or local testing
+
+```yaml
+global:
+  redisConfig:
+    host: "redis://myuser:mypassword@redis.example.com:6379/1"
+```
+
+ **3. Username in environment variables + password in secret**. Use this when:
+* Redis v.7 or later, and with ACL-enabled users
+* You want to keep the password secret but still specify a username
+
+```yaml
+global:
+  redisConfig:
+    host: "redis://redis.example.com:6379/1"
+    password:
+      secretName: "my-redis-secret"   # Kubernetes Secret name
+      secretKey: "redis-password"      # Key inside Secret
+  extraEnvironmentVars:
+    REDIS_USERNAME: "myuser"           # Injected into pod env
+```
+
+## Use Helm to install Label Studio Enterprise on your Kubernetes cluster
 
 Use Helm to install Label Studio Enterprise on your Kubernetes cluster. Provide your custom resource definitions YAML file. Specify any environment variables that you need to set for your Label Studio Enterprise installation using the `--set` argument with the `helm install` command.
+
+!!! note
+    If you are deploying to a production environment, you should set the `SSRF_PROTECTION_ENABLED: true` environment variable. See [Secure Label Studio](security#Enable-SSRF-protection-for-production-environments).
 
 From the command line, run the following:
 ```shell
@@ -339,29 +391,6 @@ kubectl rollout restart deployment/<RELEASE_NAME>-ls-rqworker
 ```shell
 kubectl rollout restart deployment/<RELEASE_NAME>-ls-app
 ```
-
-## Upgrade Label Studio Enterprise using Helm
-To upgrade Label Studio Enterprise using Helm, do the following.
-
-1. Determine the latest tag version of Label Studio Enterprise and add/replace the following in your `ls-values.yaml` file: 
-   ```yaml
-   global:
-     image:
-       tag: "20210914.154442-d2d1935"
-   ```
-2. After updating the values file, retrieve the latest updates for the Helm chart:
-   ```shell
-   helm repo update heartex
-   ```
-3. Run the following from the command line to upgrade your deployment:
-   ```shell
-   helm upgrade <RELEASE_NAME> heartex/label-studio -f ls-values.yaml
-   ```
-   If you want, you can specify a version from the command line:
-   ```shell
-   helm upgrade <RELEASE_NAME> heartex/label-studio -f ls-values.yaml --set global.image.tag=20210914.154442-d2d1935
-   ```
-   This command overrides the tag value stored in `ls-values.yaml`. You must update the tag value when you upgrade or redeploy your instance to avoid version downgrades.
 
 
 ## Uninstall Label Studio Enterprise using Helm
