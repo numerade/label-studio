@@ -4,6 +4,7 @@ import logging
 import os
 import pathlib
 
+from core.decorators import permission_required
 from core.filters import ListFilter
 from core.label_config import config_essential_data_has_changed
 from core.mixins import GetParentObjectMixin
